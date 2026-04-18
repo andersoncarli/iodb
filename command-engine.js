@@ -61,7 +61,9 @@ class CommandRegistry {
   async load(cmdDir) {
     if (typeof cmdDir === 'object' && cmdDir.path) cmdDir = cmdDir.path
     if (!existsSync(cmdDir)) return
-    console.log(`[command] Scanning ${cmdDir}`)
+    if (process.env.UTEST !== '1' && (!globalThis.G || globalThis.G.v >= 2)) {
+      console.log(`[command] Scanning ${cmdDir}`)
+    }
     const { resolve } = await import('path')
     const { readdirSync } = await import('fs')
     const entries = readdirSync(cmdDir, { withFileTypes: true }).filter(e => e.isDirectory() || (e.isFile() && e.name.endsWith('.js')))
@@ -72,7 +74,7 @@ class CommandRegistry {
       if (!existsSync(file)) continue
 
       try {
-        console.log(`[command] Importing ${name} from ${file}`)
+        // console.log(`[command] Importing ${name} from ${file}`)
         const mod = await import(resolve(file))
         const fn = mod.default || mod[name] || mod.run
         if (fn) {
@@ -81,7 +83,7 @@ class CommandRegistry {
           this.register(name, fn, meta, renderFn, resolve(file))
         }
       } catch (e) {
-        // Silently skip if it doesn't match the new pattern
+        console.error(`[command] Failed to load ${name}: ${e.message}\n${e.stack}`)
       }
     }
   }
@@ -151,7 +153,7 @@ class CommandRegistry {
     const execute = async () => {
       try {
         const finalArgs = Array.isArray(ctx.args) ? ctx.args : [ctx.args]
-        
+
         // Helix Unitary Dispatcher: Detect if it's a KV handler or a CLI command
         // KV Handlers: (key, value, kv_fn)
         // CLI Commands: (args, ctx)
@@ -164,7 +166,7 @@ class CommandRegistry {
         } else {
            res = await cmd.fn(...finalArgs, ctx)
         }
-        
+
         ctx.result = res
         ctx.output = res
         if (cmd.render && res && typeof res === 'object' && !Array.isArray(res)) res._render = cmd.render

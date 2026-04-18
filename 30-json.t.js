@@ -1,0 +1,1 @@
+import { JsonCollection } from './30-json.js'; import { join } from 'path'; test('JSON Adapter', async () => { await withTempDir(async (tmp) => { const fp = join(tmp,'t.json'); const db = JsonCollection(fp); db.in({a:1}).flush(); expect(db.get().a).toBe(1); }); });

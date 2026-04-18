@@ -53,4 +53,5 @@ const jsonlFmt = (filePath) => {
 
 export const extensions = ['jsonl']
 export const JsonlCollection = (filePath) => LogCollection(filePath, jsonlFmt(filePath))
+export { jsonlFmt }
 export default JsonlCollection

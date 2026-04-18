@@ -217,8 +217,8 @@ export function node(path, ...rest) {
                if (!SYSTEM) return res
                return SYSTEM.stream[branch][turn]
             }
-            if (b._id === cleanPath) {
-               b._id = turn
+            if (b._id === cleanPath || !b._id) {
+               b._id = cleanPath || turn
                b._branch = branch
             }
          }
