@@ -10,7 +10,7 @@ const waitForWatch = (ms = 80) => new Promise(r => setTimeout(r, ms))
 
 describe("lib/memory.js - State Persistence", () => {
 
-  test("TC-1: write(patch) / read(key) round-trip", async () => {
+  test("TC-1: write(patch) / read(key) round-trip",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "foo": { status: "complete", ts: 1 } })
@@ -18,7 +18,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-2: read() (no key) returns full desk object", async () => {
+  test("TC-2: read() (no key) returns full desk object",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "a": 1, "b": 2 })
@@ -28,7 +28,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-3: write() is additive — existing keys not clobbered", async () => {
+  test("TC-3: write() is additive — existing keys not clobbered",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "x": 1 })
@@ -38,7 +38,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-4: readPrefix(prefix) returns matching keys", async () => {
+  test("TC-4: readPrefix(prefix) returns matching keys",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({
@@ -81,7 +81,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-5: writeTask uses task: prefix convention", async () => {
+  test("TC-5: writeTask uses task: prefix convention",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.writeTask(">foo>bar", { status: "complete", ts: 42 })
@@ -89,7 +89,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-6: reconstruct(rootPath) returns all nodes under that root", async () => {
+  test("TC-6: reconstruct(rootPath) returns all nodes under that root",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.writeTask(">plan", { status: "planned" })
@@ -104,7 +104,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-7: isComplete(path) reflects persisted status", async () => {
+  test("TC-7: isComplete(path) reflects persisted status",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.writeTask(">plan>done", { status: "complete" })
@@ -115,7 +115,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-8: groupProgress(groupPath) counts done/total", async () => {
+  test("TC-8: groupProgress(groupPath) counts done/total",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.writeTask(">grp", { status: "planned" })
@@ -136,7 +136,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-9: clearState() removes the working desk file", async () => {
+  test("TC-9: clearState() removes the working desk file",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "x": 1 })
@@ -145,7 +145,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-10: write() appends log entry to state.dash", async () => {
+  test("TC-10: write() appends log entry to state.dash",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "k": "v" })
@@ -157,7 +157,7 @@ describe("lib/memory.js - State Persistence", () => {
     })
   })
 
-  test("TC-11: 100 rapid writes produce 100 valid JSONL entries", async () => {
+  test("TC-11: 100 rapid writes produce 100 valid JSONL entries",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       for (let i = 0; i < 100; i++) {
@@ -178,7 +178,7 @@ describe("lib/memory.js - State Persistence", () => {
 
 describe("lib/memory.js - tail() reactive watch", () => {
 
-  test("TC-12: tail(exact key) fires when that key changes", async () => {
+  test("TC-12: tail(exact key) fires when that key changes",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({})   // seed desk so file exists before watch
@@ -196,7 +196,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
     })
   })
 
-  test("TC-13: tail(exact key) does NOT fire when a different key changes", async () => {
+  test("TC-13: tail(exact key) does NOT fire when a different key changes",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({})
@@ -213,7 +213,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
     })
   })
 
-  test("TC-14: tail(prefix) fires on any key with that prefix", async () => {
+  test("TC-14: tail(prefix) fires on any key with that prefix",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({})
@@ -236,7 +236,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
     })
   })
 
-  test("TC-15: tail(null) fires on any desk change", async () => {
+  test("TC-15: tail(null) fires on any desk change",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({})
@@ -254,7 +254,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
     })
   })
 
-  test("TC-16: watcher.close() stops future events", async () => {
+  test("TC-16: watcher.close() stops future events",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({})
@@ -269,7 +269,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
     })
   })
 
-  test("TC-17: tail on missing desk creates the file, then watches it", async () => {
+  test("TC-17: tail on missing desk creates the file, then watches it",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       // No initial write — desk does not exist
@@ -295,7 +295,7 @@ describe("lib/memory.js - tail() reactive watch", () => {
 
 describe("lib/memory.js - rebuild() WAL reconstruction", () => {
 
-  test("TC-18: rebuild() reconstructs desk from state.dash WAL", async () => {
+  test("TC-18: rebuild() reconstructs desk from state.dash WAL",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "task:>a": { status: "complete", ts: 1 } })
@@ -318,7 +318,7 @@ describe("lib/memory.js - rebuild() WAL reconstruction", () => {
     })
   })
 
-  test("TC-19: rebuild() on missing WAL returns {} without throwing", async () => {
+  test("TC-19: rebuild() on missing WAL returns {} without throwing",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       // No writes — no files at all
@@ -327,7 +327,7 @@ describe("lib/memory.js - rebuild() WAL reconstruction", () => {
     })
   })
 
-  test("TC-20: read() lazily calls rebuild() when desk is missing but WAL exists", async () => {
+  test("TC-20: read() lazily calls rebuild() when desk is missing but WAL exists",  async ({check}) => {
     await withTempDir(async (dir) => {
       const m = memory({ cwd: dir, branch: "t", turn: 1 })
       m.write({ "task:>x": { status: "complete", ts: 99 } })

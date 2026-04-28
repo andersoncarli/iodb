@@ -6,7 +6,7 @@ import { writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { withTempDir } from '../withTempDir.js'
 
-test('Dash: Node Proxy hierarchy navigation', () => {
+test('Dash: Node Proxy hierarchy navigation', ({check}) => {
   const root = Node('root', '', '', {}, { _hashes: {} })
   const sprint = Node('1-sprint', 'Sprint Title', 'h1', {}, {}, '1-sprint', root)
   const task = Node('1.1.1-task', 'Task Title', 'h2', { priority: 'high' }, {}, '1-sprint>1.1.1-task', root)
@@ -16,13 +16,13 @@ test('Dash: Node Proxy hierarchy navigation', () => {
   root._hashes['1-sprint'] = 'h1'
   root._hashes['1-sprint>1.1.1-task'] = 'h2'
 
-  expect(root['1-sprint'].title).toBe('Sprint Title')
-  expect(root['1-sprint']['1.1.1-task'].priority).toBe('high')
-  expect(root['1-sprint'].children.length).toBe(1)
-  expect(root['1-sprint'].children[0].id).toBe('1.1.1-task')
+  check(root['1-sprint'].title, 'Sprint Title')
+  check(root['1-sprint']['1.1.1-task'].priority, 'high')
+  check(root['1-sprint'].children.length, 1)
+  check(root['1-sprint'].children[0].id, '1.1.1-task')
 })
 
-test('Dash: Round-trip — basic hierarchy hashes survive stringify', async () => {
+test('Dash: Round-trip — basic hierarchy hashes survive stringify',  async ({check}) => {
   const raw = [
     'PROJECT: Helix Scale #p0',
     '-: {"version":0.1}',
@@ -42,39 +42,39 @@ test('Dash: Round-trip — basic hierarchy hashes survive stringify', async () =
     const col = DashCollection(fp).open()
 
     const state = col.get()
-    expect(state.PROJECT._val).toBe('Helix Scale')
-    expect(state.PROJECT._hash).toBe('p0')
-    expect(state.meta.version).toBe(0.1)
+    check(state.PROJECT._val, 'Helix Scale')
+    check(state.PROJECT._hash, 'p0')
+    check(state.meta.version, 0.1)
 
     const task = state['1-sprint']['1.1-pillar']['1.1.1-task']
-    expect(task.title).toBe('Task 1')
-    expect(task.priority).toBe('low') // anonymous node override wins
-    expect(task.notes).toContain('Line 1\nLine 2')
+    check(task.title, 'Task 1')
+    check(task.priority, 'low') // anonymous node override wins
+    check((task.notes)?.includes?.('Line 1\nLine 2'))
 
     const stringified = state.toString()
-    expect(stringified).toContain('#s1')
-    expect(stringified).toContain('#p1')
-    expect(stringified).toContain('#t1')
-    expect(stringified).toContain('#a1')
+    check((stringified)?.includes?.('#s1'))
+    check((stringified)?.includes?.('#p1'))
+    check((stringified)?.includes?.('#t1'))
+    check((stringified)?.includes?.('#a1'))
   })
 })
 
-test('Dash: Meta hash-anchored line parsed correctly', async () => {
+test('Dash: Meta hash-anchored line parsed correctly',  async ({check}) => {
   const raw = '-#m1: {"version":0.2,"env":"prod"}'
   await withTempDir(async tmp => {
     const fp = join(tmp, 'test.yaml')
     writeFileSync(fp, raw)
     const col = DashCollection(fp).open()
     const state = col.get()
-    expect(state.meta).toBeDefined()
-    expect(state.meta.version).toBe(0.2)
-    expect(state.meta.env).toBe('prod')
-    expect(state._hashes?.meta).toBe('m1')
-    expect(state.toString()).toContain('#m1')
+    check((state.meta) !== undefined)
+    check(state.meta.version, 0.2)
+    check(state.meta.env, 'prod')
+    check(state._hashes?.meta, 'm1')
+    check((state.toString())?.includes?.('#m1'))
   })
 })
 
-test('Dash: Metadata hash persists in new collection after flush', async () => {
+test('Dash: Metadata hash persists in new collection after flush',  async ({check}) => {
   await withTempDir(async tmp => {
     const fp = join(tmp, 'PLANS.yaml')
     const col = DashCollection(fp).open()
@@ -84,11 +84,11 @@ test('Dash: Metadata hash persists in new collection after flush', async () => {
 
     const yaml = readFileSync(fp, 'utf8')
     // Key uses ALPHA alphabet: 0-9, a-z, A-Z, -, +
-    expect(yaml).toMatch(/meta#[a-zA-Z0-9\-+]+: \{"version":0\.1,"priority":"high"\}/)
+    check((/meta#[a-zA-Z0-9\-+]+: \{"version":0\.1,"priority":"high"\}/).test(yaml))
   })
 })
 
-test('Dash: Complex metadata tags parse correctly', async () => {
+test('Dash: Complex metadata tags parse correctly',  async ({check}) => {
   const raw = '---1.1.2-feat: Test Features [critical, 4.5h, wip] { "owner": "jr" } #h9'
   await withTempDir(async tmp => {
     const fp = join(tmp, 'test.yaml')
@@ -96,15 +96,15 @@ test('Dash: Complex metadata tags parse correctly', async () => {
     const col = DashCollection(fp).open()
     const n = col.get('1.1.2-feat')
 
-    expect(n.priority).toBe('critical')
-    expect(n.estimate).toBe(4.5)
-    expect(n.status).toBe('wip')
-    expect(n.owner).toBe('jr')
-    expect(n._hash).toBe('h9')
+    check(n.priority, 'critical')
+    check(n.estimate, 4.5)
+    check(n.status, 'wip')
+    check(n.owner, 'jr')
+    check(n._hash, 'h9')
   })
 })
 
-test('Dash: Circular purity — parse → stringify → re-parse preserves data model', async () => {
+test('Dash: Circular purity — parse → stringify → re-parse preserves data model',  async ({check, log}) => {
   const raw = [
     '-#mv: {"version":1}',
     '',
@@ -124,11 +124,11 @@ test('Dash: Circular purity — parse → stringify → re-parse preserves data 
 
     // Stringify pass 1: all hashes must survive
     const out1 = s1.toString()
-    expect(out1).toContain('#mv')
-    expect(out1).toContain('#s1')
-    expect(out1).toContain('#p1')
-    expect(out1).toContain('#t1')
-    expect(out1).toContain('#t2')
+    check(out1.includes('#mv'))
+    check(out1.includes('#s1'))
+    check(out1.includes('#p1'))
+    check(out1.includes('#t1'))
+    check(out1.includes('#t2'))
 
     // Write and re-parse
     const fp2 = join(tmp, 'circ2.yaml')
@@ -137,30 +137,31 @@ test('Dash: Circular purity — parse → stringify → re-parse preserves data 
     const s2 = col2.get()
 
     // Semantic parity: same key data model
-    expect(s2.meta?.version).toBe(s1.meta?.version)
-    expect(s2['1-sprint']?.title).toBe(s1['1-sprint']?.title)
+    check(s2.meta?.version, s1.meta?.version)
+    check(s2['1-sprint']?.title, s1['1-sprint']?.title)
 
     const feat1 = s1['1-sprint']['1.1-pillar']['1.1.1-feat']
     const feat2 = s2['1-sprint']['1.1-pillar']['1.1.1-feat']
-    expect(feat2?.title).toBe(feat1?.title)
-    expect(feat2?.priority).toBe(feat1?.priority)
-    expect(feat2?.estimate).toBe(feat1?.estimate)
-    expect(feat2?.status).toBe(feat1?.status)
+    check(feat2.title, feat1.title)
+    check(feat2.priority, feat1.priority)
+    check(feat2.estimate, feat1.estimate)
+    check(feat2.status, feat1.status)
 
     // Hash stability across round-trip
-    expect(s2._hashes?.['1-sprint']).toBeTruthy()
-    expect(s2._hashes?.['1-sprint>1.1-pillar']).toBeTruthy()
+    log('s2._hashes', s2._hashes)
+    check(!!s2._hashes?.['1-sprint'])
+    check(!!s2._hashes?.['1-sprint>1.1-pillar'])
 
     // Stringify pass 2 must contain same hashes as pass 1
     const out2 = s2.toString()
-    expect(out2).toContain('#s1')
-    expect(out2).toContain('#p1')
-    expect(out2).toContain('#t1')
-    expect(out2).toContain('#t2')
+    check(out2.includes?.('#s1'))
+    check(out2.includes?.('#p1'))
+    check(out2.includes?.('#t1'))
+    check(out2.includes?.('#t2'))
   })
 })
 
-test('Dash: Projection sync — col.in + flush writes correct YAML', async () => {
+test('Dash: Projection sync — col.in + flush writes correct YAML',  async ({check}) => {
   const raw = [
     '-1-sprint#s1: Sprint 1',
     '--1.1-pillar#p1: Pillar 1',
@@ -176,7 +177,7 @@ test('Dash: Projection sync — col.in + flush writes correct YAML', async () =>
     col.flush()
 
     const yaml = readFileSync(fp, 'utf8')
-    expect(yaml).toContain('updated')
-    expect(yaml).toMatch(/meta#[a-zA-Z0-9\-+]+:/)
+    check((yaml)?.includes?.('updated'))
+    check((/meta#[a-zA-Z0-9\-+]+:/).test(yaml))
   })
 })

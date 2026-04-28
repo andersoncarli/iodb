@@ -416,6 +416,8 @@ export function entityProxy(entity) {
     set(_, k, v) {
       if (typeof k === 'string' && k.startsWith('_')) { entity[k] = v; return true }
       if (k in entity) { entity[k] = v; return true }
+      const desc = Object.getOwnPropertyDescriptor(_, k)
+      if (desc?.set) { desc.set(v); return true }
       if (typeof entity.in === 'function') { entity.in({ [k]: v }); return true }
       return false
     },
