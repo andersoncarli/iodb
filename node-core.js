@@ -111,8 +111,14 @@ export function makeNode(init = {}) {
         const isAbs = addrStr.startsWith('/') || addrStr.startsWith('\\') || (addrStr.length > 2 && addrStr[1] === ':' && addrStr[2] === '\\')
         const physical = bag._path || (isAbs ? addrStr : null)
 
-        if (type === 'file' || type === 'stream') return physical || false
-        if (type === 'cwd') return (physical ? dirname(physical) : bag._cwd || false)
+        if (type === 'file') return (physical && existsSync(physical)) ? physical : false
+        if (type === 'stream') {
+          const streamDirPath = bag._branch && args[0]?.streamDir
+            ? join(args[0].streamDir, bag._branch, 'stream.jsonl') : null
+          if (streamDirPath && existsSync(streamDirPath)) return streamDirPath
+          return physical || false
+        }
+        if (type === 'cwd') return (physical && existsSync(physical)) ? dirname(physical) : (bag._cwd || false)
         return false
       }
 
@@ -214,8 +220,17 @@ export function node(path, ...rest) {
             const branch = M[1] || 'main'
             const turn = M[2]
             if (!cleanPath) {
-               if (!SYSTEM) return res
-               return SYSTEM.stream[branch][turn]
+               if (!SYSTEM) {
+                 if (branch) res[NODE].bag._branch = branch
+                 if (turn) res[NODE].bag._turn = turn
+                 return res
+               }
+               const streamNode = SYSTEM.stream[branch][turn]
+               const sb = streamNode[NODE].bag
+               if (!sb._branch) sb._branch = branch
+               if (!sb._turn) sb._turn = turn
+               if (!sb._addr) sb._addr = path
+               return streamNode
             }
             if (b._id === cleanPath || !b._id) {
                b._id = cleanPath || turn
@@ -394,7 +409,10 @@ export function entityProxy(entity) {
             }
           }
         }
-        if (type === 'file' || type === 'stream') return (typeof entity.path === 'function' ? entity.path() : entity.path) || false
+        const ep = typeof entity.path === 'function' ? entity.path() : entity.path
+        if (type === 'file') return (ep && existsSync(ep)) ? ep : false
+        if (type === 'stream') return ep || false
+        if (type === 'cwd') return (ep && existsSync(ep)) ? dirname(ep) : false
         return false
       }
       if (k in entity) return entity[k]
@@ -581,13 +599,18 @@ export function registerTaskPlugin(dbInstance) {
     const task = {
       _id: leaf, _path: key, open: () => task,
       complete: () => task.in({ status: 'complete' }),
-      get: (k) => { const s = tasks.get(prefix) ?? {}; return k ? s[k] : s },
+      get: (k) => { const s = tasks.get(prefix) ?? {}; if (!k) return s; return (k in s) ? s[k] : resolveTask(key + '/' + k) },
       in: (patch) => tasks.in({ [prefix]: { ...(tasks.get(prefix) ?? {}), ...patch } }),
     }
     const proxy = entityProxy(task)
     TASK_CACHE.set(key, proxy)
     return proxy
   }
+  node.plugRoot(/^\/\/task(\/|$)/, (path) => {
+    const taskPath = path.slice('//task'.length).replace(/^\//, '')
+    if (!taskPath) return SYSTEM.task
+    return resolveTask(taskPath)
+  })
   node.plug('task', {
     match: /^>/,
     parse: resolveTask,
