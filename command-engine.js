@@ -61,9 +61,7 @@ class CommandRegistry {
   async load(cmdDir) {
     if (typeof cmdDir === 'object' && cmdDir.path) cmdDir = cmdDir.path
     if (!existsSync(cmdDir)) return
-    if (process.env.UTEST !== '1' && (!globalThis.G || globalThis.G.v >= 2)) {
-      console.log(`[command] Scanning ${cmdDir}`)
-    }
+    if (globalThis._debugBus) console.log(`[command] Scanning ${cmdDir}`)
     const { resolve } = await import('path')
     const { readdirSync } = await import('fs')
     const entries = readdirSync(cmdDir, { withFileTypes: true }).filter(e => e.isDirectory() || (e.isFile() && e.name.endsWith('.js')))
@@ -74,7 +72,7 @@ class CommandRegistry {
       if (!existsSync(file)) continue
 
       try {
-        // console.log(`[command] Importing ${name} from ${file}`)
+        if (globalThis._debugBus) console.log(`[command] Importing ${name} from ${file}`)
         const mod = await import(resolve(file))
         const fn = mod.default || mod[name] || mod.run
         if (fn) {
@@ -82,8 +80,8 @@ class CommandRegistry {
           const renderFn = fn.render || mod.render || null
           this.register(name, fn, meta, renderFn, resolve(file))
         }
-      } catch (e) {
-        console.error(`[command] Failed to load ${name}: ${e.message}\n${e.stack}`)
+      } catch {
+        // Silently skip if it doesn't match the new pattern
       }
     }
   }

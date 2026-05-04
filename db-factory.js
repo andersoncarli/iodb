@@ -241,7 +241,7 @@ globalThis.__DB_FACTORY__ = DB; export function DB(target = 'io', opts = {}) {
   if (target === 'STREAM') return openCollection(join(root, 'DB', 'STREAM', 'STREAM'), { type: 'stream' })
   if (target === 'SHELL')  return openCollection(join(root, 'DB', 'SHELL', 'SHELL'), { type: 'stream' })
   if (target === 'STATE')  return openCollection(join(root, 'DB', 'STATE', 'STATE.yaml'), { type: 'yaml' })
-  if (target === 'PLANS')  return openCollection(join(root, 'DB', 'PLANS', 'PLANS.yaml'), { type: 'yaml' })
+  if (target === 'PLANS')  return openNamedCollection(findNamedFile('PLANS', root) || join(root, 'DB', 'PLANS', 'PLANS.yaml'))
   if (target === 'MEMORY') return openCollection(join(root, 'DB', 'MEMORY', 'memory.dash'))
 
   // Unified DB Singularity Aliases (CAPS)

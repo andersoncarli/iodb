@@ -556,6 +556,7 @@ export default DashCollection
 // loadFile auto-detects Dash annotations vs plain YAML — same collection engine.
 
 const hasDashAnnotations = (content) =>
+  /^-[^ \n]/m.test(content) ||
   /^[0-9]+\.[0-9]/m.test(content) ||
   /#[a-zA-Z0-9_+\-]{2,16}[:\s]/m.test(content) ||
   /\[(?:critical|high|medium|low|open|done|wip)/m.test(content)
