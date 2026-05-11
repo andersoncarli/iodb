@@ -11,7 +11,6 @@
 import { readdirSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { Stream as HelixStream } from '../stream.js'
 import IO, { merge, append, assign } from './io-engine.js'
 import { TRANSITION, ON } from '../bus.js'
 import { findProjectRoot } from '../config.js'
@@ -46,7 +45,6 @@ import { NodeAdapter } from './60-node.js'
      }
    }
  }
- BACKENDS['stream'] = (f, o) => HelixStream(f).open()
 BACKENDS['sqlite'] = (await import('./50-sqlite.js')).default
 
 // ── IO Type Reducers ──────────────────────────────────────────────────────────
@@ -207,14 +205,47 @@ function findNamedFile(name, root) {
   return null
 }
 
-// Open a named collection — always uses DashCollection (reactive log + projection)
+// Open a named collection — uses YAML adapter for .yaml/.yml, Dash for everything else
 function openNamedCollection(filePath, opts = {}) {
-  const factory = BACKENDS['dash']
-  if (!factory) throw new Error('[db] DashCollection adapter not loaded')
+  const ext = (filePath.split('.').pop() || '').toLowerCase()
+  const backendName = (ext === 'yaml' || ext === 'yml') ? 'yaml' : 'dash'
+  const factory = BACKENDS[backendName] || BACKENDS['dash']
+  if (!factory) throw new Error(`[db] No adapter for: ${backendName}`)
   ensureDir(filePath)
   const col = factory(filePath, opts)
   col.open()
   return wrapWithCount(col)
+}
+
+// ── Stream proxy: wraps IO with put/settle/two-arg-in for Avalanche Protocol ─
+function _streamProxy(io) {
+  const _origIn = io.in.bind(io)   // capture before proxy overwrites it
+  const _write = (typeOrPatch, payload) => {
+    if (typeof typeOrPatch === 'string' && payload !== undefined)
+      return _origIn({ type: typeOrPatch, ...payload })
+    return _origIn(typeOrPatch)
+  }
+  const settle = (token, timeout = 30000) => {
+    const ref = String(token ?? '').replace(/^#/, '')
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`[IO] settle timeout (${timeout}ms)`)), timeout)
+      const existing = io.records()
+        .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
+        .find(({ payload }) => payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref))
+      if (existing) { clearTimeout(timer); return resolve(existing.payload) }
+      const off = io.out(({ key, fullKey, payload }) => {
+        if (payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref)) {
+          clearTimeout(timer); off(); resolve(payload)
+        }
+      })
+    })
+  }
+  const proxy = wrapWithCount(io)
+  proxy.in  = _write
+  proxy.put = _write
+  proxy.settle = settle
+  proxy.load = () => io.records()   // backward compat with Stream.load()
+  return proxy
 }
 
 // ── DB — Polymorphic Factory Entry Point (11.36 §2) ──────────────────────────
@@ -238,11 +269,13 @@ globalThis.__DB_FACTORY__ = DB; export function DB(target = 'io', opts = {}) {
   }
 
   if (target === 'DB') return openCollection(join(root, 'DB'), { type: 'folder' })
-  if (target === 'STREAM') return openCollection(join(root, 'DB', 'STREAM', 'STREAM'), { type: 'stream' })
-  if (target === 'SHELL')  return openCollection(join(root, 'DB', 'SHELL', 'SHELL'), { type: 'stream' })
+  if (target === 'STREAM') { const io = IO(join(root, 'DB', 'STREAM', 'STREAM')); io.open(); return _streamProxy(io) }
+  if (target === 'SHELL')  { const io = IO(join(root, 'DB', 'SHELL',  'SHELL'));  io.open(); return wrapWithCount(io) }
   if (target === 'STATE')  return openCollection(join(root, 'DB', 'STATE', 'STATE.yaml'), { type: 'yaml' })
   if (target === 'PLANS')  return openCollection(join(root, 'DB', 'PLANS', 'PLANS.yaml'), { type: 'yaml' })
   if (target === 'MEMORY') return openCollection(join(root, 'DB', 'MEMORY', 'memory.dash'))
+  if (target === 'STORE')  return openCollection(join(root, 'DB', 'store.yaml'), { type: 'yaml' })
+  if (target === 'TASKS')  return openCollection(join(root, 'DB', 'tasks.yaml'), { type: 'yaml' })
 
   // Unified DB Singularity Aliases (CAPS)
   // Dynamically discover CAPS from the DB/ directory

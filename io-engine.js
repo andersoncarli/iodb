@@ -246,17 +246,21 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
         ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
         idx.tsStats.push(recoverTs(fullKey, payload, prevP))
         idx.lastPayload = payload
-        EMIT(`io:${name}`, { key: short.p, fullKey, payload })
       }
       idx.seqCount = startSeq + _log.length
       idx.global   = idx.tsStats.get()
       _log = []
 
-      // ── Release lock — write yaml every 100 flushes, otherwise restore ────
+      // ── Release lock BEFORE emitting — prevents re-entrant lock deadlock ─
       if (++flushCount % 100 === 0) {
         flushYaml(projection, myLock)
       } else {
-        renameSync(myLock, f.yaml)   // free state, yaml content unchanged
+        renameSync(myLock, f.yaml)
+      }
+
+      // ── Emit after lock released so handlers can write without deadlock ──
+      for (const { short, fullKey, payload } of provisional) {
+        EMIT(`io:${name}`, { key: short.p, fullKey, payload })
       }
     } catch (e) {
       if (!existsSync(f.yaml)) try { renameSync(myLock, f.yaml) } catch { }
@@ -320,6 +324,13 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       } else {
         syncFrom(0)
         genesisWritten = true
+        // Bootstrap yaml lock file if missing (legacy files opened for the first time)
+        if (!existsSync(f.yaml)) {
+          const tmp = f.yaml + '.tmp'
+          writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
+          renameSync(tmp, f.yaml)
+          saveIndex()
+        }
       }
     },
     close() {
@@ -341,6 +352,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     find:    (pred) => recs().map(r => Object.values(r)[0]).filter(pred),
     get size() { return idx.seqCount },
     family: f,
+    path:    () => f.dash,
   }
 }
 
