@@ -5,7 +5,7 @@
  *   DB('.env.yaml')   → file-direct → collection proxy  (Scenario A)
  *   DB('MODELS')      → named → resolves file → proxy   (Scenario A via name)
  *   DB('io')          → namespace → factory instance    (Scenario B)
- *   DB({ path })      → same as DB('io', { path })
+ *   DB('path/')      → same as DB('io', { path })
  */
 
 import { readdirSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs'
@@ -15,20 +15,20 @@ import IO, { merge, append, assign } from './io-engine.js'
 import { TRANSITION, ON } from '../bus.js'
 import { findProjectRoot } from '../config.js'
 import { NodeAdapter } from './60-node.js'
- 
+
  let _globalDB = null
  export function getGlobalDB() { return _globalDB }
- 
+
  const __dirname = dirname(fileURLToPath(import.meta.url))
  const ADAPTERS_PATH = __dirname
- 
+
  const BACKENDS = {}
  const EXT_MAP = {}
- 
+
  const entries = readdirSync(ADAPTERS_PATH)
    .filter(f => f.endsWith('.js') && !f.endsWith('.t.js') && f.match(/^\d+-/))
    .sort((a, b) => parseInt(a) - parseInt(b))
- 
+
  for (const entry of entries) {
    const handle = entry.match(/^\d+-(.+)\.js$/)[1]
    const module = await import(`./${entry}`)
@@ -46,6 +46,7 @@ import { NodeAdapter } from './60-node.js'
    }
  }
 BACKENDS['sqlite'] = (await import('./50-sqlite.js')).default
+BACKENDS['stream'] = (filePath, opts) => IO(filePath, { reduce: append, initial: [] })
 
 // ── IO Type Reducers ──────────────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ function wrapWithCount(col) {
       if (k === 'exists') return existsSync((typeof t.path === 'function' ? t.path() : t.path) || t.id)
       if (k === 'count') return t.size ?? 0
       if (k === 'type') return t.type
-      
+
       const res = base
       if (typeof res === 'function') return res.bind(t)
       return res
@@ -145,7 +146,7 @@ function openCollection(filePath, opts = {}) {
   }
   const ext = filePath.split('.').pop().toLowerCase()
   let backendName = opts.type || EXT_MAP[ext]
-  
+
   if (!backendName) {
     // Unknown extension: test for text or binary
     if (existsSync(filePath)) {
@@ -159,10 +160,10 @@ function openCollection(filePath, opts = {}) {
       } else if (stat.isDirectory()) {
         backendName = 'folder'
       } else {
-        backendName = 'file' 
+        backendName = 'file'
       }
     } else {
-      backendName = 'file' 
+      backendName = 'file'
     }
   }
 
@@ -350,8 +351,15 @@ globalThis.__DB_FACTORY__ = DB; export function DB(target = 'io', opts = {}) {
   const isFilePath = typeof target === 'string' && /[./\\]/.test(target)
 
   if (isFilePath) {
+    // If target is an existing directory, treat as factory root: DB(dir, 'CollName') pattern
+    const absTarget = resolve(root, target)
+    if (existsSync(absTarget) && statSync(absTarget).isDirectory()) {
+      const factory = createFactory(absTarget, { _direct: true, ...opts })
+      if (opts.type && !BACKENDS[opts.type]) return factory.collection(opts.type)
+      return factory
+    }
     // Try root-relative first, then DB/-relative
-    const candidates = [resolve(root, target), resolve(root, 'DB', target)]
+    const candidates = [absTarget, resolve(root, 'DB', target)]
     const filePath = candidates.find(p => existsSync(p)) ?? candidates[0]
     return openCollection(filePath, opts)
   }
@@ -397,7 +405,7 @@ function createFactory(root, opts = {}) {
       else if (effectiveBackend === 'blob') ext = '.bin'
       else if (effectiveBackend === 'folder') ext = ''
       else if (effectiveBackend === 'stream') ext = '.dash'
-      
+
       const fileName = name.includes('.') ? name : (name + ext)
       const fullPath = join(base, fileName)
       ensureDir(fullPath)
@@ -408,15 +416,37 @@ function createFactory(root, opts = {}) {
       const col = factoryFn(fullPath, { ...opts, ...colOpts, classes: effectiveClasses })
       col.open()
 
-      // 3. Wrap Stream backend to add entity prefix (entity#hash)
+      // 3. Wrap Stream backend with put/settle API (entity#hash tokens)
       if (effectiveBackend === 'stream') {
-        const originalPut = col.put.bind(col)
-        col.put = (spec, payload) => {
-          const hash = originalPut(spec, payload)
-          const entityName = name.replace(/\.[a-z]+$/, '')
-          return `${entityName}#${hash}`
+        const entityName = name.replace(/\.[a-z]+$/, '')
+        const origIn = col.in.bind(col)
+        const put = (typeOrPatch, payload) => {
+          const rec = typeof typeOrPatch === 'string' && payload !== undefined
+            ? { type: typeOrPatch, ...payload }
+            : typeOrPatch
+          origIn(rec)
+          const recs = col.records()
+          const lastKey = recs.length > 0 ? Object.keys(recs[recs.length - 1])[0] : null
+          return lastKey ? `${entityName}#${lastKey}` : null
         }
-        col.in = col.put
+        col.put = put
+        col.in  = put
+        col.settle = (token, timeout = 30000) => {
+          const ref = String(token ?? '').split('#').pop()
+          return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error(`[IO] settle timeout (${timeout}ms)`)), timeout)
+            const match = (recs) => recs
+              .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
+              .find(({ payload }) => payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref))
+            const existing = match(col.records())
+            if (existing) { clearTimeout(timer); return resolve(existing) }
+            const off = col.out(({ key, payload }) => {
+              if (payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref)) {
+                clearTimeout(timer); off(); resolve({ key, payload })
+              }
+            })
+          })
+        }
       }
 
       // 4. Register for cross-collection resolve
@@ -540,5 +570,5 @@ function createFactory(root, opts = {}) {
 
 DB.extensions = () => Object.keys(EXT_MAP)
 DB.types = () => Object.keys(BACKENDS)
- 
+
  export default DB
