@@ -245,7 +245,7 @@ function _streamProxy(io) {
   proxy.in  = _write
   proxy.put = _write
   proxy.settle = settle
-  proxy.load = () => io.records()   // backward compat with Stream.load()
+  proxy.load = () => io.records().map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
   return proxy
 }
 
