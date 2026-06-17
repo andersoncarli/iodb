@@ -1,7 +1,7 @@
 import { DB } from './db-factory.js'
 import { join } from 'path'
 
-test('DB Factory: Adapter Resolution',  async ({check}) => {
+test('DB Factory: Adapter Resolution',  async ({check, withTempDir}) => {
   await withTempDir(async (tmp) => {
     // 1. JSON Resolution
     const jsonP = join(tmp, 'test.json')
@@ -20,9 +20,9 @@ test('DB Factory: Adapter Resolution',  async ({check}) => {
   })
 })
 
-test('DB Factory: Directory Resolution',  async ({check}) => {
+test('DB Factory: Directory Resolution',  async ({check, withTempDir}) => {
     await withTempDir(async (tmp) => {
-        const db = DB(tmp, 'folder')
+        const db = DB(join(tmp, 'folder-adapter'), { type: 'folder' })
         check(db.type, 'folder')
         check(db.exists)
     })

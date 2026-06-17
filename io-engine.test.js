@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import IO, { merge } from "./io-engine.js";
-import { withTempDir } from "../withTempDir.js";
 
-test("IO Basic Creation & Genesis",  async ({check}) => {
+test("IO Basic Creation & Genesis",  async ({ check, withTempDir }) => {
   await withTempDir(async (dir) => {
     const file = join(dir, "test.dash");
     const io = IO(file, { entity: "test", type: "kv" });
@@ -14,7 +13,7 @@ test("IO Basic Creation & Genesis",  async ({check}) => {
   });
 });
 
-test("IO Write & Projection",  async ({check}) => {
+test("IO Write & Projection",  async ({ check, withTempDir }) => {
   await withTempDir(async (dir) => {
     const file = join(dir, "test.dash");
     const io = IO(file, { reduce: merge });
@@ -28,7 +27,7 @@ test("IO Write & Projection",  async ({check}) => {
   });
 });
 
-test("IO Concurrent Writes (High Density)",  async ({check}) => {
+test("IO Concurrent Writes (High Density)",  async ({ check, withTempDir }) => {
   await withTempDir(async (dir) => {
     const file = join(dir, "test.dash");
     const io = IO(file, { reduce: merge });
@@ -44,7 +43,7 @@ test("IO Concurrent Writes (High Density)",  async ({check}) => {
   });
 });
 
-test("IO Mixed Format Detection",  async ({check}) => {
+test("IO Mixed Format Detection",  async ({ check, withTempDir }) => {
   await withTempDir(async (dir) => {
     const file = join(dir, "test.dash");
     const io = IO(file, { reduce: merge });

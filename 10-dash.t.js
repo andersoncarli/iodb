@@ -4,7 +4,6 @@
 import { DashCollection, Node } from './10-dash.js'
 import { writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { withTempDir } from '../withTempDir.js'
 
 test('Dash: Node Proxy hierarchy navigation', ({check}) => {
   const root = Node('root', '', '', {}, { _hashes: {} })
@@ -22,7 +21,7 @@ test('Dash: Node Proxy hierarchy navigation', ({check}) => {
   check(root['1-sprint'].children[0].id, '1.1.1-task')
 })
 
-test('Dash: Round-trip — basic hierarchy hashes survive stringify',  async ({check}) => {
+test('Dash: Round-trip — basic hierarchy hashes survive stringify',  async ({ check, withTempDir }) => {
   const raw = [
     'PROJECT: Helix Scale #p0',
     '-: {"version":0.1}',
@@ -59,7 +58,7 @@ test('Dash: Round-trip — basic hierarchy hashes survive stringify',  async ({c
   })
 })
 
-test('Dash: Meta hash-anchored line parsed correctly',  async ({check}) => {
+test('Dash: Meta hash-anchored line parsed correctly',  async ({ check, withTempDir }) => {
   const raw = '-#m1: {"version":0.2,"env":"prod"}'
   await withTempDir(async tmp => {
     const fp = join(tmp, 'test.yaml')
@@ -74,7 +73,7 @@ test('Dash: Meta hash-anchored line parsed correctly',  async ({check}) => {
   })
 })
 
-test('Dash: Metadata hash persists in new collection after flush',  async ({check}) => {
+test('Dash: Metadata hash persists in new collection after flush',  async ({ check, withTempDir }) => {
   await withTempDir(async tmp => {
     const fp = join(tmp, 'PLANS.yaml')
     const col = DashCollection(fp).open()
@@ -88,7 +87,7 @@ test('Dash: Metadata hash persists in new collection after flush',  async ({chec
   })
 })
 
-test('Dash: Complex metadata tags parse correctly',  async ({check}) => {
+test('Dash: Complex metadata tags parse correctly',  async ({ check, withTempDir }) => {
   const raw = '---1.1.2-feat: Test Features [critical, 4.5h, wip] { "owner": "jr" } #h9'
   await withTempDir(async tmp => {
     const fp = join(tmp, 'test.yaml')
@@ -104,7 +103,7 @@ test('Dash: Complex metadata tags parse correctly',  async ({check}) => {
   })
 })
 
-test('Dash: Circular purity — parse → stringify → re-parse preserves data model',  async ({check, log}) => {
+test('Dash: Circular purity — parse → stringify → re-parse preserves data model',  async ({ check, log, withTempDir }) => {
   const raw = [
     '-#mv: {"version":1}',
     '',
@@ -161,7 +160,7 @@ test('Dash: Circular purity — parse → stringify → re-parse preserves data 
   })
 })
 
-test('Dash: Projection sync — col.in + flush writes correct YAML',  async ({check}) => {
+test('Dash: Projection sync — col.in + flush writes correct YAML',  async ({ check, withTempDir }) => {
   const raw = [
     '-1-sprint#s1: Sprint 1',
     '--1.1-pillar#p1: Pillar 1',
