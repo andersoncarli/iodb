@@ -273,7 +273,8 @@ globalThis.__DB_FACTORY__ = DB; export function DB(target = 'io', opts = {}) {
   if (target === 'STREAM') { const io = IO(join(root, 'DB', 'STREAM', 'STREAM')); io.open(); return _streamProxy(io) }
   if (target === 'SHELL')  { const io = IO(join(root, 'DB', 'SHELL',  'SHELL'));  io.open(); return wrapWithCount(io) }
   if (target === 'STATE')  return openCollection(join(root, 'DB', 'STATE', 'STATE.yaml'), { type: 'yaml' })
-  if (target === 'PLANS')  return openCollection(join(root, 'DB', 'PLANS', 'PLANS.yaml'), { type: 'yaml' })
+  if (target === 'PLANS')   return openCollection(join(root, 'DB', 'PLANS', 'PLANS.yaml'), { type: 'yaml' })
+  if (target === 'BACKLOG') return openCollection(join(root, 'DB', 'PLANS', 'BACKLOG', 'BACKLOG.yaml'), { type: 'yaml' })
   if (target === 'MEMORY') return openCollection(join(root, 'DB', 'MEMORY', 'memory.dash'))
   if (target === 'STORE')  return openCollection(join(root, 'DB', 'store.yaml'), { type: 'yaml' })
   if (target === 'TASKS')  return openCollection(join(root, 'DB', 'tasks.yaml'), { type: 'yaml' })
