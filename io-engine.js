@@ -7,7 +7,7 @@ import {
 import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
 import { EMIT, ON, OFF } from '../bus.js'
-import { makeFullKey, shortestPrefix, verify, toBits, recoverTs, toB64 } from '../hash.js'
+import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from '../hash.js'
 
 /**
  * io-engine.js — IO Primitive
@@ -31,14 +31,6 @@ import { makeFullKey, shortestPrefix, verify, toBits, recoverTs, toB64 } from '.
  *                            write batch in one appendFileSync, release
  */
 
-// Incremental Welford variance — O(1) per update, no array needed
-function makeStats() {
-  let n = 0, mean = 0, M2 = 0
-  return {
-    push(x) { n++; const d = x - mean; mean += d / n; M2 += d * (x - mean) },
-    get()   { return { avg: mean, var: n > 1 ? M2 / (n - 1) : 0, count: n } },
-  }
-}
 
 function acquireLock(f, timeout = 1000) {
   const deadline = Date.now() + timeout
@@ -109,14 +101,14 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   let idx = {
     records: new Set(), prefixSet: new Set(),
     shortMap: new Map(), hashMap: new Map(),
-    levels: {}, global: {}, seqCount: 2,
-    lastPayload: null, tsStats: makeStats(),
+    levels: {}, recordCount: 0,
+    lastKey: null,
   }
   let _log = []   // buffered payloads not yet on disk
 
   function saveIndex() {
     if (!f.index) return
-    let out = `0${JSON.stringify(idx.global)}\n`
+    let out = ''
     for (const [lvl, d] of Object.entries(idx.levels))
       out += `${lvl}${JSON.stringify({ count: d.count })}\n`
     const tmp = f.index + '.tmp'
@@ -140,39 +132,38 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     }
     for (const rec of recs) {
       const key = Object.keys(rec)[0], payload = rec[key]
-      if (key === '0' || key === '1') { idx.lastPayload = payload; continue }
-      const seqPos = idx.seqCount++
-      const fullKey = makeFullKey(payload, idx.lastPayload, seqPos)
-      idx.tsStats.push(recoverTs(fullKey, payload, idx.lastPayload))
+      if (key === '0') { idx.lastKey = '0'; continue }
+      if (key === '1') { idx.lastKey = '1'; continue }
+      const fullKey = makeFullKey(payload, idx.lastKey)
       const bits = toBits(key)
       idx.records.add(fullKey); idx.prefixSet.add(bits)
       idx.shortMap.set(key, fullKey); idx.shortMap.set(fullKey, fullKey)
       idx.hashMap.set(fullKey, payload)
       ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
-      idx.lastPayload = payload
+      idx.lastKey = key
+      idx.recordCount++
     }
-    idx.global = idx.tsStats.get()
     lastOffset = sz
     genesisWritten = true
   }
 
   // Provisional key computation — uses a local copy of prefixSet, no side-effects.
   // Single-record fast path skips the Set copy entirely.
-  function computeKeys(log, prevPayload, startSeq) {
+  function computeKeys(log, prevKey) {
     if (log.length === 1) {
-      const payload = log[0], fullKey = makeFullKey(payload, prevPayload, startSeq)
+      const payload = log[0], fullKey = makeFullKey(payload, prevKey)
       const short = shortestPrefix(fullKey, idx.prefixSet)
-      return [{ fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevP: prevPayload }]
+      return [{ fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevKey }]
     }
     const localSet = new Set(idx.prefixSet)
-    let prev = prevPayload, seq = startSeq
+    let prevK = prevKey
     return log.map(payload => {
-      const prevP = prev
-      const fullKey = makeFullKey(payload, prev, seq++)
+      const pk = prevK
+      const fullKey = makeFullKey(payload, prevK)
       const short = shortestPrefix(fullKey, localSet)
       localSet.add(short.bits)
-      prev = payload
-      return { fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevP }
+      prevK = short.p
+      return { fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevKey: pk }
     })
   }
 
@@ -189,7 +180,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
     idx.records.add('0'); idx.records.add('1')
     idx.shortMap.set('0', '0'); idx.shortMap.set('1', '1')
-    idx.lastPayload = p1
+    idx.lastKey = '1'
     lastOffset = statSync(f.dash).size
     genesisWritten = true
   }
@@ -207,9 +198,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     if (!genesisWritten) writeGenesis()
 
     // ── Pre-compute outside lock ─────────────────────────────────────────────
-    let prevPayload = idx.lastPayload
-    let startSeq   = idx.seqCount
-    let provisional = computeKeys(_log, prevPayload, startSeq)
+    let prevKey = idx.lastKey
+    let provisional = computeKeys(_log, prevKey)
     const _projCopy = () => Array.isArray(projection) ? [...projection] : { ...projection }
     let newProjection = provisional.reduce(
       (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), _projCopy()
@@ -223,9 +213,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // ── Verify chain: re-compute if another writer got in (size check only) ─
       if (statSync(f.dash).size !== lastOffset) {
         syncFrom(lastOffset)
-        prevPayload   = idx.lastPayload
-        startSeq      = idx.seqCount
-        provisional   = computeKeys(_log, prevPayload, startSeq)
+        prevKey = idx.lastKey
+        provisional = computeKeys(_log, prevKey)
         newProjection = provisional.reduce(
           (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), { ...projection }
         )
@@ -238,17 +227,15 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
 
       // ── Update in-memory state ────────────────────────────────────────────
       projection = newProjection
-      for (const { short, fullKey, payload, prevP } of provisional) {
+      for (const { short, fullKey, payload } of provisional) {
         const bits = short.bits
         idx.prefixSet.add(bits); idx.records.add(fullKey)
         idx.shortMap.set(short.p, fullKey); idx.shortMap.set(fullKey, fullKey)
         idx.hashMap.set(fullKey, payload)
         ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
-        idx.tsStats.push(recoverTs(fullKey, payload, prevP))
-        idx.lastPayload = payload
+        idx.lastKey = short.p
+        idx.recordCount++
       }
-      idx.seqCount = startSeq + _log.length
-      idx.global   = idx.tsStats.get()
       _log = []
 
       // ── Release lock BEFORE emitting — prevents re-entrant lock deadlock ─
@@ -350,7 +337,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     header:  () => get('#0'),
     state:   () => get('#1'),
     find:    (pred) => recs().map(r => Object.values(r)[0]).filter(pred),
-    get size() { return idx.seqCount },
+    get size() { return idx.recordCount },
     family: f,
     path:    () => f.dash,
   }
