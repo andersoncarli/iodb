@@ -223,7 +223,7 @@ function _streamProxy(io) {
   const _origIn = io.in.bind(io)   // capture before proxy overwrites it
   const _write = (typeOrPatch, payload) => {
     if (typeof typeOrPatch === 'string' && payload !== undefined)
-      return _origIn({ type: typeOrPatch, ...payload })
+      return _origIn({ ...payload, type: typeOrPatch })
     return _origIn(typeOrPatch)
   }
   const settle = (token, timeout = 30000) => {

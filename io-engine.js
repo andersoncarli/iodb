@@ -345,7 +345,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
 }
 
 export const merge = (acc, rec) => {
-  const p = Object.values(rec)[0]; if (!p || typeof p !== 'object') return acc
+  let p = Object.values(rec)[0]
+  if (!p || typeof p !== 'object') p = rec
   for (const [k, v] of Object.entries(p)) {
     if (v === null) delete acc[k]
     else if (typeof v === 'object' && !Array.isArray(v)) acc[k] = { ...(acc[k] ?? {}), ...v }
