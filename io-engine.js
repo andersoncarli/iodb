@@ -6,7 +6,7 @@ import {
 // openSync/fstatSync/readSync/closeSync retained for syncFrom incremental read
 import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
-import { EMIT, ON, OFF } from '../bus.js'
+import { EMIT, ON, OFF, TRANSITION } from '../bus.js'
 import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from '../hash.js'
 
 /**
@@ -248,6 +248,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // ── Emit after lock released so handlers can write without deadlock ──
       for (const { short, fullKey, payload } of provisional) {
         EMIT(`io:${name}`, { key: short.p, fullKey, payload })
+        TRANSITION('io:write', { entity: name, key: short.p, payload })
       }
     } catch (e) {
       if (!existsSync(f.yaml)) try { renameSync(myLock, f.yaml) } catch { }
