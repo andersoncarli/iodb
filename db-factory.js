@@ -273,7 +273,11 @@ globalThis.__DB_FACTORY__ = DB; export function DB(target = 'io', opts = {}) {
   if (target === 'STREAM') { const io = IO(join(root, 'DB', 'STREAM', 'STREAM')); io.open(); return _streamProxy(io) }
   if (target === 'SHELL')  { const io = IO(join(root, 'DB', 'SHELL',  'SHELL'));  io.open(); return wrapWithCount(io) }
   if (target === 'STATE')  return openCollection(join(root, 'DB', 'STATE', 'STATE.yaml'), { type: 'yaml' })
-  if (target === 'PLANS')   return openCollection(join(root, 'DB', 'PLANS', 'PLANS.yaml'), { type: 'yaml' })
+  if (target === 'PLANS') {
+    const fullPlans = join(root, 'DB', 'PLANS', 'PLANS-FULL.yaml')
+    const plans = join(root, 'DB', 'PLANS', 'PLANS.yaml')
+    return openCollection(plans, { type: 'dash', genesis: existsSync(fullPlans) ? 'PLANS-FULL.yaml' : undefined })
+  }
   if (target === 'BACKLOG') return openCollection(join(root, 'DB', 'PLANS', 'BACKLOG', 'BACKLOG.yaml'), { type: 'yaml' })
   if (target === 'MEMORY') return openCollection(join(root, 'DB', 'MEMORY', 'memory.dash'))
   if (target === 'STORE')  return openCollection(join(root, 'DB', 'store.yaml'), { type: 'yaml' })
@@ -538,9 +542,9 @@ function createFactory(root, opts = {}) {
       return result
     },
 
-    /** Open a named collection with explicit options (genesis, type) */
+    /** Open a named collection with explicit options (template/genesis, type) */
     open: (name, colOpts = {}) => {
-      const { genesis, type: colType = 'dash' } = colOpts
+      const { genesis, template, type: colType = 'dash' } = colOpts
       const factoryFn = BACKENDS[colType]
       if (!factoryFn) throw new Error(`[db] Unknown collection type: ${colType}`)
       const dir = join(base, name)
@@ -548,7 +552,7 @@ function createFactory(root, opts = {}) {
         try { mkdirSync(dir, { recursive: true }) } catch (e) {}
       }
       const filePath = join(dir, name + '.yaml')
-      const col = factoryFn(filePath, { genesis })
+      const col = factoryFn(filePath, { genesis: template || genesis })
       col.open()
       return wrapWithCount(col)
     },

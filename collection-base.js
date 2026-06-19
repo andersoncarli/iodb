@@ -51,6 +51,28 @@ export function deepMerge(target, patch, sep = '/', _seen = new WeakSet()) {
   return target
 }
 
+export function fillMissing(target, source, _seen = new WeakSet()) {
+  if (typeof source !== 'object' || source === null || _seen.has(source)) return target
+  _seen.add(source)
+
+  for (const [key, value] of Object.entries(source)) {
+    if (key === '_root') continue
+    if (target[key] === undefined) {
+      target[key] = value
+    } else if (
+      target[key] &&
+      value &&
+      typeof target[key] === 'object' &&
+      typeof value === 'object' &&
+      !Array.isArray(target[key]) &&
+      !Array.isArray(value)
+    ) {
+      fillMissing(target[key], value, _seen)
+    }
+  }
+  return target
+}
+
 globalThis.__COLLECTION_REGISTRY__ = globalThis.__COLLECTION_REGISTRY__ || new Map()
 const OPEN_REGISTRY = globalThis.__COLLECTION_REGISTRY__
 
@@ -180,7 +202,7 @@ export function LogCollection(filePath, fmt) {
         if (recs.length <= 2) {
           // Read source from #0 record's projection field, fallback to absPath
           const genesis0 = recs.find(r => r.key === '0')
-          const projSrc = genesis0?.patch?.projection
+          const projSrc = fmt.genesis || genesis0?.patch?.projection
           const srcFile = projSrc ? resolve(dirname(logPath), projSrc) : absPath
           if (srcFile && existsSync(srcFile)) {
             const diskCache = fmt.loadFile(srcFile) || {}
@@ -189,6 +211,15 @@ export function LogCollection(filePath, fmt) {
               appendLog('1', cache, 1); registerKey('1')
               prevPayload = cache
             }
+          }
+        }
+        if (recs.length > 2) {
+          const genesis0 = recs.find(r => r.key === '0')
+          const projSrc = fmt.genesis || genesis0?.patch?.projection
+          const srcFile = projSrc ? resolve(dirname(logPath), projSrc) : null
+          if (srcFile && existsSync(srcFile)) {
+            const diskCache = fmt.loadFile(srcFile) || {}
+            fillMissing(cache, diskCache)
           }
         }
         // Reconstruct flat hash map from YAML projection if missing (dash/annotated adapters)
