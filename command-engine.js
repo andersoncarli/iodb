@@ -73,7 +73,10 @@ class CommandRegistry {
 
       try {
         if (globalThis._debugBus) console.log(`[command] Importing ${name} from ${file}`)
+        const start = performance.now()
         const mod = await import(resolve(file))
+        const elapsed = Math.round(performance.now() - start)
+        if (globalThis._debugBus && elapsed > 50) console.error(`[command:timing] ${name} import ${elapsed}ms`)
         const fn = mod.default || mod[name] || mod.run
         if (fn) {
           const meta = fn._meta || mod.meta || fn.meta || {}
