@@ -230,15 +230,21 @@ function _streamProxy(io) {
     const ref = String(token ?? '').replace(/^#/, '')
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`[IO] settle timeout (${timeout}ms)`)), timeout)
+      const matchRecord = (payload) => payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref)
       const existing = io.records()
         .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
-        .find(({ payload }) => payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref))
+        .find(({ payload }) => matchRecord(payload))
       if (existing) { clearTimeout(timer); return resolve(existing.payload) }
       const off = io.out(({ key, fullKey, payload }) => {
-        if (payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref)) {
-          clearTimeout(timer); off(); resolve(payload)
-        }
+        if (matchRecord(payload)) { clearTimeout(timer); off(); clearInterval(poll); resolve(payload) }
       })
+      // Fallback poll in case bus handlers are cleared (e.g. by busReset() in tests)
+      const poll = setInterval(() => {
+        const found = io.records()
+          .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
+          .find(({ payload }) => matchRecord(payload))
+        if (found) { clearTimeout(timer); off(); clearInterval(poll); resolve(found.payload) }
+      }, 100)
     })
   }
   const proxy = wrapWithCount(io)
