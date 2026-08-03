@@ -317,34 +317,17 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
           syncFrom(0)
         }
       } else {
-        // Fast-open: restore prefixSet + lastKey from index, then delta-sync only new bytes.
-        // Falls back to full syncFrom(0) when index is absent or lacks the new header fields.
-        let usedFastPath = false
-        if (existsSync(f.index) && existsSync(f.yaml)) {
-          try {
-            const raw = readFileSync(f.index, 'utf8')
-            const mKey    = raw.match(/^lastKey=(.+)$/m)
-            const mOffset = raw.match(/^lastOffset=(\d+)$/m)
-            const mPfx    = raw.match(/^prefixes=(.+)$/m)
-            if (mKey && mOffset && mPfx) {
-              idx.lastKey = mKey[1].trim()
-              const savedOffset = parseInt(mOffset[1])
-              idx.records.add('0'); idx.records.add('1')
-              idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
-              for (const bits of mPfx[1].split(',')) if (bits) idx.prefixSet.add(bits)
-              syncFrom(savedOffset)   // read only bytes written since last saveIndex()
-              usedFastPath = true
-            }
-          } catch {}
-        }
-        if (!usedFastPath) {
-          syncFrom(0)
-          if (!existsSync(f.yaml)) {
-            const tmp = f.yaml + '.tmp'
-            writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
-            renameSync(tmp, f.yaml)
-            saveIndex()
-          }
+        // ponytail: index's lastOffset/lastKey track the raw append position, not
+        // the (possibly stale, only-every-100th-flush) yaml snapshot — a fresh
+        // process's empty `projection` can't safely delta-sync from that offset.
+        // Full rebuild from the dash log instead; upgrade to real delta-sync if
+        // profiling shows open() cost matters for large logs.
+        syncFrom(0)
+        if (!existsSync(f.yaml)) {
+          const tmp = f.yaml + '.tmp'
+          writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
+          renameSync(tmp, f.yaml)
+          saveIndex()
         }
         genesisWritten = true
       }
