@@ -231,16 +231,20 @@ function _streamProxy(io) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`[IO] settle timeout (${timeout}ms)`)), timeout)
       const matchRecord = (payload) => payload?.type === 'result' && (payload?._prev === ref || payload?._ref === ref)
-      const existing = io.records()
+      // Check only in-session records: results are always written after tokens are created,
+      // so historical records from prior sessions can never match our fresh token.
+      const fastRecs = io.sessionRecords ? io.sessionRecords() : []
+      const existing = fastRecs
         .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
         .find(({ payload }) => matchRecord(payload))
       if (existing) { clearTimeout(timer); return resolve(existing.payload) }
       const off = io.out(({ key, fullKey, payload }) => {
         if (matchRecord(payload)) { clearTimeout(timer); off(); clearInterval(poll); resolve(payload) }
       })
-      // Fallback poll in case bus handlers are cleared (e.g. by busReset() in tests)
+      // Fallback poll: check session records only (no disk read), in case bus was cleared.
       const poll = setInterval(() => {
-        const found = io.records()
+        const recs = io.sessionRecords ? io.sessionRecords() : []
+        const found = recs
           .map(r => ({ key: Object.keys(r)[0], payload: Object.values(r)[0] }))
           .find(({ payload }) => matchRecord(payload))
         if (found) { clearTimeout(timer); off(); clearInterval(poll); resolve(found.payload) }

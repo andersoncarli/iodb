@@ -104,11 +104,15 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     levels: {}, recordCount: 0,
     lastKey: null,
   }
-  let _log = []   // buffered payloads not yet on disk
+  let _log = []          // buffered payloads not yet on disk
+  let _sessionRecs = []  // all records written this session (for fast settle checks)
 
   function saveIndex() {
     if (!f.index) return
-    let out = ''
+    // Header: lastKey + lastOffset allow fast-open (delta sync from this point)
+    // prefixes: full prefixSet bits needed to avoid key collisions on next append
+    let out = `lastKey=${idx.lastKey || ''}\nlastOffset=${lastOffset}\n`
+    if (idx.prefixSet.size > 0) out += `prefixes=${[...idx.prefixSet].join(',')}\n`
     for (const [lvl, d] of Object.entries(idx.levels))
       out += `${lvl}${JSON.stringify({ count: d.count })}\n`
     const tmp = f.index + '.tmp'
@@ -142,6 +146,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
       idx.lastKey = key
       idx.recordCount++
+      _sessionRecs.push(rec)  // accumulate so callers can skip disk re-reads
     }
     lastOffset = sz
     genesisWritten = true
@@ -235,14 +240,16 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
         ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
         idx.lastKey = short.p
         idx.recordCount++
+        _sessionRecs.push({ [short.p]: payload })
       }
       _log = []
 
       // ── Release lock BEFORE emitting — prevents re-entrant lock deadlock ─
       if (++flushCount % 100 === 0) {
-        flushYaml(projection, myLock)
+        flushYaml(projection, myLock)   // saves yaml + index (inside lock window)
       } else {
         renameSync(myLock, f.yaml)
+        saveIndex()                     // always persist index so open() can fast-path
       }
 
       // ── Emit after lock released so handlers can write without deadlock ──
@@ -310,15 +317,36 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
           syncFrom(0)
         }
       } else {
-        syncFrom(0)
-        genesisWritten = true
-        // Bootstrap yaml lock file if missing (legacy files opened for the first time)
-        if (!existsSync(f.yaml)) {
-          const tmp = f.yaml + '.tmp'
-          writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
-          renameSync(tmp, f.yaml)
-          saveIndex()
+        // Fast-open: restore prefixSet + lastKey from index, then delta-sync only new bytes.
+        // Falls back to full syncFrom(0) when index is absent or lacks the new header fields.
+        let usedFastPath = false
+        if (existsSync(f.index) && existsSync(f.yaml)) {
+          try {
+            const raw = readFileSync(f.index, 'utf8')
+            const mKey    = raw.match(/^lastKey=(.+)$/m)
+            const mOffset = raw.match(/^lastOffset=(\d+)$/m)
+            const mPfx    = raw.match(/^prefixes=(.+)$/m)
+            if (mKey && mOffset && mPfx) {
+              idx.lastKey = mKey[1].trim()
+              const savedOffset = parseInt(mOffset[1])
+              idx.records.add('0'); idx.records.add('1')
+              idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
+              for (const bits of mPfx[1].split(',')) if (bits) idx.prefixSet.add(bits)
+              syncFrom(savedOffset)   // read only bytes written since last saveIndex()
+              usedFastPath = true
+            }
+          } catch {}
         }
+        if (!usedFastPath) {
+          syncFrom(0)
+          if (!existsSync(f.yaml)) {
+            const tmp = f.yaml + '.tmp'
+            writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
+            renameSync(tmp, f.yaml)
+            saveIndex()
+          }
+        }
+        genesisWritten = true
       }
     },
     close() {
@@ -334,6 +362,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     get,
     out:     (h) => { ON(`io:${name}`, h); return () => OFF(`io:${name}`, h) },
     records: recs,
+    sessionRecords: () => _sessionRecs,
     verify:  () => verify(recs()),
     header:  () => get('#0'),
     state:   () => get('#1'),
