@@ -20,7 +20,7 @@ import {
   openSync, readSync, closeSync, mkdirSync
 } from 'fs'
 import { ON, TRANSITION } from '../../utils/src/bus.js'
-import { shortestPrefix, makeFullKey, fromB64, nano, toBits } from '../hash.js'
+import { shortestPrefix, makeFullKey, fromB64, nano, toBits } from './hash.js'
 
 export function deepMerge(target, patch, sep = '/', _seen = new WeakSet()) {
   if (typeof patch !== 'object' || patch === null || _seen.has(patch)) return target

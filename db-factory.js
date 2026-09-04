@@ -13,7 +13,7 @@ import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import IO, { merge, append, assign } from './io-engine.js'
 import { TRANSITION, ON } from '../../utils/src/bus.js'
-import { findProjectRoot } from '../config.js'
+import { findProjectRoot } from './find-root.js'
 import { NodeAdapter } from './60-node.js'
 
  let _globalDB = null

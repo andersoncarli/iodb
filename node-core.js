@@ -7,7 +7,7 @@ import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync } from 'fs
 import { join, basename, dirname, resolve as pathResolve } from 'path'
 import Emitter from '../../utils/src/Emitter.js'
 import { TransitionBus } from './60-transition.js'
-import { findProjectRoot } from '../config.js'
+import { findProjectRoot } from './find-root.js'
 
 export const SYMBOL = Symbol('reactive')
 export const NODE = Symbol('node')

@@ -7,7 +7,7 @@ import {
 import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
 import { EMIT, ON, OFF, TRANSITION } from '../../utils/src/bus.js'
-import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from '../hash.js'
+import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
 
 /**
  * io-engine.js — IO Primitive
@@ -369,6 +369,6 @@ export const merge = (acc, rec) => {
 export const append = (acc, rec) => (acc ?? []).push ? (acc.push(rec), acc) : [rec]
 export const assign = (acc, rec) => Object.assign({}, acc, Object.values(rec)[0] ?? {})
 
-export { verify, makeFullKey, sha64 } from '../hash.js'
+export { verify, makeFullKey, sha64 } from './hash.js'
 
 export default IO
