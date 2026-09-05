@@ -5,7 +5,7 @@ import DB from './db.js'
 import { JsonCollection } from './30-json.js'
 import { EnvCollection } from './40-env.js'
 import { node, registerFilePlugins, registerCorePlugins, registerTaskPlugin, registerWorkerPlugin, _resetPlugins } from './node.js'
-import { TRANSITION, ON } from './utils/src/bus.js'
+import { TRANSITION, ON } from '../utils/src/bus.js'
 
 async function withProjectTempDir(withTempDir, fn) {
   return await withTempDir(async (dir) => {

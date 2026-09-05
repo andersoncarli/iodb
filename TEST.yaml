@@ -12,7 +12,6 @@ unit:
     - "**/*.int.t.js"
     - "**/*.integration.t.js"
     - "**/*.live.t.js"
-    - utils/AI/llm.call.t.js
 integration:
   include:
     - "**/*.int.t.js"
