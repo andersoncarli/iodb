@@ -1,7 +1,6 @@
-// suite completa roda standalone, sem nenhum projeto hospedeiro no path
-// (TEST.yaml exclui utils/AI/llm.call.t.js — chamada LLM real, fora do
-// escopo do io-db, falharia aqui por falta de rede/API key)
-eval("bun utest/utest.js .", (out, r) => check(r.exitCode, 0))
+// suite propria roda via utest peer (../utest), so os 12 arquivos de iodb —
+// utils/utest nao sao mais submodule aninhado, entao nao aparecem na varredura
+eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
 
 // DB() resolve namespace e persiste um registro via kv()
 eval(
