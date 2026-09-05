@@ -1,0 +1,10 @@
+{
+  "project": "iodb",
+  "created": "2026-09-05",
+  "schema": 1,
+  "paths": {
+    "plans": "plans",
+    "sprints": "sprints"
+  },
+  "test": "bun utest/utest.js ."
+}
