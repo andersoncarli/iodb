@@ -6,7 +6,7 @@ import {
 // openSync/fstatSync/readSync/closeSync retained for syncFrom incremental read
 import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
-import { EMIT, ON, OFF, TRANSITION } from '../../utils/src/bus.js'
+import { EMIT, ON, OFF, TRANSITION } from './utils/src/bus.js'
 import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
 
 /**

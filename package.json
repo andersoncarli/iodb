@@ -1,0 +1,19 @@
+{
+  "name": "iodb",
+  "version": "1.0.0",
+  "description": "Reactive DB/IO engine: polymorphic factory, universal node resolver, and file/yaml/json/sqlite/dash adapters",
+  "main": "db.js",
+  "type": "module",
+  "scripts": {
+    "test": "bun utest/utest.js ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andersoncarli/iodb.git"
+  },
+  "author": "anderson.carli@gmail.com",
+  "license": "ISC",
+  "dependencies": {
+    "yaml": "^2.8.2"
+  }
+}

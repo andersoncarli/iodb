@@ -1,0 +1,6 @@
+[submodule "utils"]
+	path = utils
+	url = git@github.com:andersoncarli/utils.git
+[submodule "utest"]
+	path = utest
+	url = git@github.com:andersoncarli/utest.git

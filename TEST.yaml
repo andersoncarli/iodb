@@ -1,0 +1,19 @@
+exclude:
+  - node_modules/**
+  - .git/**
+  - dist/**
+  - build/**
+  - tmp/**
+unit:
+  include:
+    - "**/*.t.js"
+    - "**/*.test.js"
+  exclude:
+    - "**/*.int.t.js"
+    - "**/*.integration.t.js"
+    - "**/*.live.t.js"
+integration:
+  include:
+    - "**/*.int.t.js"
+    - "**/*.integration.t.js"
+    - "**/*.live.t.js"

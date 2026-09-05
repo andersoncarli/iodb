@@ -1,0 +1,5 @@
+node_modules/
+bun.lock
+.utest/
+.sprint/eval-state.json
+.sprint/eval-log.jsonl
