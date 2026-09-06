@@ -115,7 +115,11 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     if (idx.prefixSet.size > 0) out += `prefixes=${[...idx.prefixSet].join(',')}\n`
     for (const [lvl, d] of Object.entries(idx.levels))
       out += `${lvl}${JSON.stringify({ count: d.count })}\n`
-    const tmp = f.index + '.tmp'
+    // PID-suffixed temp: the fixed `.index.tmp` name was shared across every
+    // process writing this base, so concurrent writers clobbered each other's
+    // temp mid write→rename (ENOENT on rename, or a silently corrupt index).
+    // A private temp + atomic rename is collision-free on POSIX.
+    const tmp = `${f.index}.${process.pid}.tmp`
     writeFileSync(tmp, out); renameSync(tmp, f.index)
   }
 
@@ -248,8 +252,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (++flushCount % 100 === 0) {
         flushYaml(projection, myLock)   // saves yaml + index (inside lock window)
       } else {
-        renameSync(myLock, f.yaml)
-        saveIndex()                     // always persist index so open() can fast-path
+        saveIndex()                     // inside lock window; always persist so open() can fast-path
+        renameSync(myLock, f.yaml)      // release
       }
 
       // ── Emit after lock released so handlers can write without deadlock ──
@@ -324,10 +328,31 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
         // profiling shows open() cost matters for large logs.
         syncFrom(0)
         if (!existsSync(f.yaml)) {
-          const tmp = f.yaml + '.tmp'
-          writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
-          renameSync(tmp, f.yaml)
-          saveIndex()
+          // f.yaml is transiently gone because another process holds the lock
+          // (renamed it to f.yaml.<pid>). Rebuilding it here must go through
+          // the same lock — an unlocked write + saveIndex() raced concurrent
+          // flush()es and corrupted the index.
+          let myLock
+          try { myLock = acquireLock(f) } catch { myLock = null }
+          if (myLock) {
+            // Lock held: acquireLock renamed f.yaml -> myLock, so if f.yaml is
+            // back, another writer released between our existsSync and acquire —
+            // just restore and move on. Otherwise rebuild it under the lock.
+            try {
+              if (existsSync(f.yaml)) {
+                try { unlinkSync(myLock) } catch { }
+              } else {
+                const tmp = f.yaml + '.tmp'
+                writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
+                saveIndex()
+                renameSync(tmp, f.yaml)
+                try { unlinkSync(myLock) } catch { }
+              }
+            } catch (e) {
+              try { renameSync(myLock, f.yaml) } catch { }
+              throw e
+            }
+          }
         }
         genesisWritten = true
       }
