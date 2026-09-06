@@ -15,4 +15,16 @@ Legenda: ⚫ planejada · 🟠 implementando · 🟡 testada · 🟢 avaliada ·
 
 </details>
 
+<details><summary>🟢 [1.2] saveIndex corrompe sob escrita concorrente multi-processo — avaliada</summary>
+
+[002](sprints/002-saveindex-corrompe-sob-escrita-concorrente-multi-processo.report.md "saveIndex corrompe sob escrita concorrente multi-processo · `saveIndex()` deixou de corromper o índice sob N processos concorrentes no mesmo `IO()`: temp por-PID + o `saveIndex()` sem lock do ramo `el")
+
+</details>
+
+<details><summary>🟢 [1.3] Matriz de concorrencia multi-processo: eixos format/reduce/close/seed — avaliada</summary>
+
+[003](sprints/003-matriz-de-concorrencia-multi-processo.report.md "matriz de concorrencia multi-processo · Bateria parametrica (`io-engine.matrix.test.js`) varrendo format × reduce × seed × close sob 8 processos concorrentes: confirma que o fix do sprint 002 fecha to")
+
+</details>
+
 </details>
