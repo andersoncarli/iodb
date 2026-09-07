@@ -32,7 +32,24 @@ import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
  */
 
 
-function acquireLock(f, timeout = 1000) {
+// `flush` rewrites the WHOLE file, so its cost grows with the store — but the timeout was
+// a fixed 1000ms, which does not. A store that works today times out at ten times the size
+// for no reason the caller can see, and the failure is intermittent (it only bites when a
+// writer actually has to wait), which makes it read like a flaky test rather than a limit
+// being hit. The floor stays 1000ms; past ~64KB it grows with the file. Found via `~/utest`
+// feature 2.7, where the test ledger crossed that line and started dropping runs.
+//
+// The spin below stays a bare `while` on purpose. Yielding between attempts (`Atomics.wait`
+// on a throwaway buffer, the portable way to block synchronously) looks like the obvious
+// companion fix and was tried: it made things WORSE — 4 failures to 10 in this suite. The
+// wait is synchronous, so it blocks the whole thread, and when the lock contention is
+// between writers inside ONE process, the sleeping waiter is blocking the very work it is
+// waiting on. A bare spin at least lets an async holder make progress.
+function lockTimeout(f) {
+  try { return Math.max(1000, Math.ceil(statSync(f.yaml).size / 64) ) } catch { return 1000 }
+}
+
+function acquireLock(f, timeout = lockTimeout(f)) {
   const deadline = Date.now() + timeout
   const myLock = `${f.yaml}.${process.pid}`
   while (Date.now() < deadline) {
@@ -79,7 +96,7 @@ function serializeLine(key, payload, format) {
 }
 
 
-export function IO(base, { reduce, initial, log: logOverride, type, entity, format: fmt } = {}) {
+export function IO(base, { reduce, initial, log: logOverride, type, entity, format: fmt, bench } = {}) {
   const name = entity ?? basename(base), entityType = type ?? 'kv'
   const format = fmt || 'dash'
   const hasExt = /\.[a-z0-9]+$/i.test(base)
@@ -206,6 +223,12 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     if (_log.length === 0) return []
     if (!genesisWritten) writeGenesis()
 
+    // Phase instrumentation: zero cost unless `bench` was passed to IO(). Each
+    // `t.*` is a monotonic mark in ms; `bench(t)` gets the raw marks and does
+    // its own subtraction, so this stays a handful of `Date.now()` calls with
+    // no allocation on the cold path.
+    const t = bench ? { precomputeStart: Date.now() } : null
+
     // ── Pre-compute outside lock ─────────────────────────────────────────────
     let prevKey = idx.lastKey
     let provisional = computeKeys(_log, prevKey)
@@ -214,13 +237,20 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), _projCopy()
     )
     let allBytes = Buffer.from(provisional.map(p => p.line).join(''))
+    if (t) t.precomputeEnd = Date.now()
 
     // ── Acquire lock (spin ≤ 1000ms) ─────────────────────────────────────────
+    if (t) t.lockWaitStart = t.precomputeEnd
     const myLock = acquireLock(f)
+    if (t) t.lockAcquired = Date.now()   // seção crítica começa aqui
 
     try {
       // ── Verify chain: re-compute if another writer got in (size check only) ─
-      if (statSync(f.dash).size !== lastOffset) {
+      if (t) t.verifyStatStart = Date.now()
+      const resynced = statSync(f.dash).size !== lastOffset
+      if (t) t.verifyStatEnd = Date.now()
+      if (resynced) {
+        if (t) t.recomputeStart = t.verifyStatEnd
         syncFrom(lastOffset)
         prevKey = idx.lastKey
         provisional = computeKeys(_log, prevKey)
@@ -228,11 +258,14 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
           (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), { ...projection }
         )
         allBytes = Buffer.from(provisional.map(p => p.line).join(''))
+        if (t) t.recomputeEnd = Date.now()
       }
 
       // ── Append log ────────────────────────────────────────────────────────
+      if (t) t.appendStart = Date.now()
       appendFileSync(f.dash, allBytes)
       lastOffset += allBytes.length
+      if (t) t.appendEnd = Date.now()
 
       // ── Update in-memory state ────────────────────────────────────────────
       projection = newProjection
@@ -249,12 +282,14 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       _log = []
 
       // ── Release lock BEFORE emitting — prevents re-entrant lock deadlock ─
+      if (t) t.publishStart = Date.now()
       if (++flushCount % 100 === 0) {
         flushYaml(projection, myLock)   // saves yaml + index (inside lock window)
       } else {
         saveIndex()                     // inside lock window; always persist so open() can fast-path
         renameSync(myLock, f.yaml)      // release
       }
+      if (t) t.lockReleased = Date.now()   // seção crítica termina aqui
 
       // ── Emit after lock released so handlers can write without deadlock ──
       for (const { short, fullKey, payload } of provisional) {
@@ -266,6 +301,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       throw e
     }
 
+    if (t) bench(t)
     return provisional.map(p => '#' + p.short.p)
   }
 

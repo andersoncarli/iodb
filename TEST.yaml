@@ -8,6 +8,7 @@ unit:
   include:
     - "**/*.t.js"
     - "**/*.test.js"
+    - "**/*.bench.js"
   exclude:
     - "**/*.int.t.js"
     - "**/*.integration.t.js"
