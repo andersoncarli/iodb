@@ -3,3 +3,5 @@ bun.lock
 .utest/
 .sprint/eval-state.json
 .sprint/eval-log.jsonl
+STATUS.md
+sprints/_TOC.md
