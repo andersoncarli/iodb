@@ -12,31 +12,64 @@
  * engines share it: io-engine.js (indexed, YAML projection, dash/jsonl) and
  * nutshell/io-nutshell.js (no index, JSON projection, jsonl only).
  *
- * Lock protocol (rename-based, unchanged from io-engine.js:52-77):
- *   free    → lockFile exists
- *   locked  → lockFile renamed to lockFile.<PID>
- *   acquire → renameSync(lockFile, lockFile.<PID>)  — atomic on POSIX, ENOENT if taken
- *   stale   → scan for lockFile.<pid>, kill(pid,0) for liveness, steal if dead
+ * Lock protocol (presence-based, feature 2.3):
+ *   free    → no lockFile.* exists at all
+ *   locked  → lockFile.<PID> exists
+ *   acquire → writeFileSync(lockFile.<PID>, '', {flag:'wx'})  — atomic on POSIX
+ *   release → unlinkSync(lockFile.<PID>)
+ *   stale   → scan for lockFile.<pid>, kill(pid,0) for liveness, unlink if dead
  *
- * The stale-holder sweep is why this is a file lock and not a shared-memory
- * mutex: a mutex bit does not survive `kill -9`, and a dead holder would pin it
- * forever. Crash recovery is non-negotiable here.
+ * ABSENCE MEANS FREE, and that is the whole design. The earlier protocol was
+ * the other way round: a lock file that had to EXIST to mean free, and was
+ * renamed away to mean held. That inversion is what made the mutex need a
+ * birth — someone had to create the file once, and exactly once, before anyone
+ * could take it. Getting that wrong destroyed mutual exclusion silently: while
+ * a writer held the lock the file was absent, so a "create it if missing" init
+ * running at that moment forged a SECOND mutex and let two writers in. (007
+ * measured it: 8 of 120 critical sections overlapped.)
+ *
+ * With absence as the free state, that whole class of bug cannot be written. A
+ * fresh directory is already in the correct state, so there is no init to race,
+ * no once-only ceremony to get wrong, and nothing to clean up after a crash
+ * except the dead holder's own file.
+ *
+ * The PID goes in the NAME, never the contents. This matters for crash
+ * recovery: the sweep must identify the holder, and a name is set by the same
+ * single atomic syscall that creates the file. Had the PID lived INSIDE the
+ * file, there would be a window between create and write where the sweep finds
+ * an empty file and cannot tell a just-born lock from a corrupt one — it would
+ * either steal a live lock or hang forever. Putting it in the name closes that
+ * window by construction.
+ *
+ * That stale-holder sweep is also why this is a file lock and not a
+ * shared-memory mutex: a mutex bit does not survive `kill -9`, and a dead
+ * holder would pin it forever. Crash recovery is non-negotiable here.
  */
-import { statSync, renameSync, appendFileSync, readdirSync, writeFileSync } from 'fs'
+import { statSync, renameSync, appendFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs'
 import { dirname, basename, join } from 'path'
 
 /**
- * Lock timeout scales with the file, because the work under the lock used to
- * scale with it too. A fixed 1000ms meant a store that worked today timed out at
- * ten times the size for no reason the caller could see.
+ * The lock timeout is a flat constant, and feature 2.3 is what earned it back.
  *
- * Feature 2.3 is expected to turn this back into a small constant — once 2.2 has
- * made the critical section O(1) in store size, a growing timeout has nothing
- * left to compensate for. It stays adaptive until that is measured, not assumed.
+ * It used to scale with the size of the projection file, because the work under
+ * the lock scaled with it too: the whole projection was rewritten inside the
+ * critical section, so a bigger store really did need longer before a wait could
+ * honestly be called a deadlock. That is a compensation, not a policy.
+ *
+ * 2.2 took the O(n) work out of the critical section and 2.1 measured what was
+ * left — *stat, append, release*, flat in store size. A timeout that grows now
+ * compensates for nothing, and a growing timeout is worse than a fixed one: it
+ * turns a real deadlock into a long hang that scales with your data.
+ *
+ * 1000ms against a sub-millisecond critical section is ~three orders of
+ * magnitude of headroom, which covers scheduler noise and a slow disk without
+ * hiding a genuinely stuck holder. The stale-PID sweep in acquireLock, not the
+ * timeout, is what handles a dead holder.
  */
-export function lockTimeout(lockFile) {
-  try { return Math.max(1000, Math.ceil(statSync(lockFile).size / 64)) } catch { return 1000 }
-}
+export const LOCK_TIMEOUT = 1000
+
+/** Back-compat shim: callers that still ask for a per-file timeout get the constant. */
+export function lockTimeout(_lockFile) { return LOCK_TIMEOUT }
 
 /**
  * Acquire the rename lock, returning the private lock path held by this process.
@@ -49,48 +82,42 @@ export function lockTimeout(lockFile) {
  * at least lets an async holder make progress.
  */
 /**
- * Create the mutex once, and only once, for a given base.
+ * Kept as a no-op for callers written against the old protocol.
  *
- * This is the subtle part, and getting it wrong silently destroys mutual
- * exclusion: while a process HOLDS the lock, the lock file does not exist —
- * acquire renamed it to `<lockFile>.<pid>`. So "create it if missing" is not a
- * safe idempotent init. A second process running that check mid-hold recreates
- * the mutex, and now there are two: the fresh `<lockFile>` and the held
- * `<lockFile>.<pid>`. Both processes proceed, inside the critical section, at
- * the same time.
- *
- * Measured: with each worker running create-if-missing, 8 of 120 critical
- * sections overlapped. With creation done exactly once, zero.
- *
- * `wx` is exclusive-create and atomic, so the race is decided by the kernel.
- * EEXIST means someone else won, which is success — and crucially, EEXIST also
- * covers "the lock exists because someone is holding it", which is why this
- * must never be paired with an existsSync guard.
+ * There is nothing left to ensure. Under presence-semantics the free state is
+ * "no file", which every directory already satisfies, so the mutex has no birth
+ * to arrange and no once-only invariant to protect. Returning true preserves
+ * the old contract ("the lock is ready to be taken") for existing call sites.
  */
-export function ensureLock(lockFile) {
-  try { writeFileSync(lockFile, '', { flag: 'wx' }); return true }
-  catch (e) { if (e.code === 'EEXIST') return false; throw e }
-}
+export function ensureLock(_lockFile) { return true }
 
-export function acquireLock(lockFile, timeout = lockTimeout(lockFile)) {
+export function acquireLock(lockFile, timeout = LOCK_TIMEOUT) {
   const deadline = Date.now() + timeout
   const myLock = `${lockFile}.${process.pid}`
+  const dir = dirname(lockFile), base = basename(lockFile) + '.'
   while (Date.now() < deadline) {
+    // `wx` is exclusive-create: the kernel decides the race, and exactly one
+    // caller can win. EEXIST means someone else holds it.
     try {
-      renameSync(lockFile, myLock)
+      writeFileSync(myLock, '', { flag: 'wx' })
       return myLock
     } catch (e) {
-      if (e.code !== 'ENOENT') throw e
+      if (e.code !== 'EEXIST') throw e
     }
-    // lockFile is gone — someone holds it. Check whether that someone is dead.
-    const dir = dirname(lockFile), base = basename(lockFile) + '.'
+    // Held — but is the holder still alive? A `kill -9` leaves the file behind
+    // with nobody to remove it, so without this sweep one dead process would
+    // wedge every future writer.
     try {
       for (const file of readdirSync(dir)) {
         if (!file.startsWith(base)) continue
         const pid = parseInt(file.slice(base.length))
-        if (!pid) continue
+        if (!pid || pid === process.pid) continue
         try { process.kill(pid, 0) } catch {
-          try { renameSync(join(dir, file), myLock); return myLock } catch { }
+          // Dead. Remove its lock and let the next spin take it normally,
+          // rather than claiming it here: unlink-then-create keeps acquisition
+          // in ONE place, so two processes reaping the same corpse still have
+          // to fight over the `wx` above, where the kernel picks one winner.
+          try { unlinkSync(join(dir, file)) } catch { }
         }
       }
     } catch { }
@@ -98,9 +125,13 @@ export function acquireLock(lockFile, timeout = lockTimeout(lockFile)) {
   throw new Error(`[IO] Lock timeout (${timeout}ms): ${lockFile}`)
 }
 
-/** Release by putting the lock file back where it was. */
-export function releaseLock(myLock, lockFile) {
-  renameSync(myLock, lockFile)
+/**
+ * Release by removing our own lock file. `lockFile` is unused now — releasing
+ * no longer has to reconstruct the free state, because the free state is
+ * nothing at all. The parameter stays for call-site compatibility.
+ */
+export function releaseLock(myLock, _lockFile) {
+  unlinkSync(myLock)
 }
 
 /**
@@ -125,7 +156,7 @@ export function releaseLock(myLock, lockFile) {
 export function appendGuarded({ lockFile, logFile, lastOffset = 0, compute, onResync, timeout }) {
   const size = () => { try { return statSync(logFile).size } catch { return 0 } }
 
-  const myLock = acquireLock(lockFile, timeout ?? lockTimeout(lockFile))
+  const myLock = acquireLock(lockFile, timeout ?? LOCK_TIMEOUT)
 
   try {
     // Did anyone else append while we were getting here? A size comparison is

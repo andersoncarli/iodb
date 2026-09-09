@@ -8,6 +8,7 @@ import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
 import { EMIT, ON, OFF, TRANSITION } from '../utils/src/bus.js'
 import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
+import { acquireLock, releaseLock, publishDerived, LOCK_TIMEOUT } from './io-append.js'
 
 /**
  * io-engine.js — IO Primitive
@@ -16,13 +17,14 @@ import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
  *   dash (default):  {payload}#key
  *   jsonl:           {"key":payload}
  *
- * Lock protocol (yaml rename):
- *   free    → f.yaml exists
- *   locked  → f.yaml renamed to f.yaml.<PID>
- *   acquire → renameSync(f.yaml, f.yaml.<PID>)  — atomic on POSIX, ENOENT if already locked
- *   release → write f.yaml.tmp, renameSync to f.yaml, unlinkSync(lockPath)
- *   error   → renameSync(lockPath, f.yaml)       — restores old projection
- *   stale   → scan for f.yaml.<pid>, kill(pid,0) to check liveness, steal if dead
+ * Lock protocol (dedicated lockfile, feature 2.3 — see io-append.js):
+ *   the mutex is f.lock, and ABSENCE means free:
+ *     free    → no f.lock.* exists
+ *     locked  → f.lock.<PID> exists (created with 'wx', atomic)
+ *     release → unlink it
+ *   Nothing has to create the mutex first, because "no file" is already the
+ *   free state. f.yaml is now a plain derived artifact, like f.index: always
+ *   present, published from outside the critical section, arbitrated by offset.
  *
  * Write path:
  *   in(payload)            — buffer + flush immediately (default, backward-compat)
@@ -32,49 +34,16 @@ import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
  */
 
 
-// `flush` rewrites the WHOLE file, so its cost grows with the store — but the timeout was
-// a fixed 1000ms, which does not. A store that works today times out at ten times the size
-// for no reason the caller can see, and the failure is intermittent (it only bites when a
-// writer actually has to wait), which makes it read like a flaky test rather than a limit
-// being hit. The floor stays 1000ms; past ~64KB it grows with the file. Found via `~/utest`
-// feature 2.7, where the test ledger crossed that line and started dropping runs.
+// The lock protocol itself now lives in io-append.js — one implementation shared by
+// this engine and the nutshell's, instead of two copies drifting apart. What used to
+// live here was a `lockTimeout` that GREW with the size of f.yaml. It grew because the
+// work under the lock grew: `flush` rewrote the whole projection inside the critical
+// section, so a bigger store genuinely needed longer before declaring a deadlock.
 //
-// The spin below stays a bare `while` on purpose. Yielding between attempts (`Atomics.wait`
-// on a throwaway buffer, the portable way to block synchronously) looks like the obvious
-// companion fix and was tried: it made things WORSE — 4 failures to 10 in this suite. The
-// wait is synchronous, so it blocks the whole thread, and when the lock contention is
-// between writers inside ONE process, the sleeping waiter is blocking the very work it is
-// waiting on. A bare spin at least lets an async holder make progress.
-function lockTimeout(f) {
-  try { return Math.max(1000, Math.ceil(statSync(f.yaml).size / 64) ) } catch { return 1000 }
-}
-
-function acquireLock(f, timeout = lockTimeout(f)) {
-  const deadline = Date.now() + timeout
-  const myLock = `${f.yaml}.${process.pid}`
-  while (Date.now() < deadline) {
-    try {
-      renameSync(f.yaml, myLock)
-      return myLock   // acquired
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e
-    }
-    // .yaml is gone — another process holds the lock; check for stale
-    const dir = dirname(f.yaml), base = basename(f.yaml) + '.'
-    try {
-      for (const file of readdirSync(dir)) {
-        if (!file.startsWith(base)) continue
-        const pid = parseInt(file.slice(base.length))
-        if (!pid) continue
-        try { process.kill(pid, 0) } catch {
-          // dead process — steal its lock
-          try { renameSync(join(dir, file), myLock); return myLock } catch { }
-        }
-      }
-    } catch { }
-  }
-  throw new Error(`[IO] Lock timeout (${timeout}ms): ${f.yaml}`)
-}
+// Feature 2.2 moved that O(n) work out, and 2.1 measured what was left. With the
+// critical section down to *stat, append, release*, a timeout that scales with the
+// store compensates for nothing — so it is a flat constant again (LOCK_TIMEOUT), and
+// the constant is justified by the measurement rather than picked by hand.
 
 function parseLine(line) {
   if (!line || typeof line !== 'string') return null
@@ -106,6 +75,12 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
                        : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.yaml',
     index: logOverride ? logOverride.replace(/\.dash$/, '.index')
                        : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.index',
+    // The mutex, feature 2.3. Zero bytes, forever — it carries no data at all,
+    // which is the entire point: nothing reads it, so nothing depends on it
+    // being present, so it is free to spend its life renamed away to
+    // `.lock.<pid>` while a writer holds it.
+    lock:  logOverride ? logOverride.replace(/\.dash$/, '.lock')
+                       : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.lock',
   }
 
   const _reduce  = reduce  ?? ((acc, rec) => Object.assign({}, acc, Object.values(rec)[0] ?? {}))
@@ -222,7 +197,11 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     appendFileSync(f.dash, serializeLine('0', p0, format) + '\n')
     appendFileSync(f.dash, serializeLine('1', p1, format) + '\n')
     projection = _reduce(_reduce(Array.isArray(_initial) ? [] : { ..._initial }, { '0': p0 }), { '1': p1 })
-    const tmp = f.yaml + '.tmp'
+    // PID-suffixed temp, for the same reason the index has one: a fixed `.tmp`
+    // is shared by every process writing this base, and they clobber each other
+    // mid write->rename. That was the bug 1.2 fixed for the index; it must not
+    // come back through the projection's door.
+    const tmp = `${f.yaml}.${process.pid}.tmp`
     writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' })); renameSync(tmp, f.yaml)
     saveIndex()
     idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
@@ -233,41 +212,45 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     genesisWritten = true
   }
 
-  // Publish the YAML projection with the lock ALREADY RELEASED (feature 2.2).
+  // Publish the YAML projection. No lock — this is feature 2.3's payoff.
   //
-  // The subtlety: f.yaml doubles as the mutex, so this cannot go through a
-  // plain write+rename the way the index can — writing f.yaml while another
-  // process holds the lock would forge a second mutex and let two writers into
-  // the critical section. (Measured on the nutshell's own lock: create-while-held
-  // put 8 of 120 critical sections in overlap.)
+  // Under 2.2 this function had to REACQUIRE the lock just to do its final
+  // rename, because f.yaml was simultaneously the projection and the mutex:
+  // writing it while another process held the lock would forge a second mutex
+  // and put two writers in the critical section at once. (Measured on the
+  // nutshell's lock: create-while-held put 8 of 120 sections in overlap.)
   //
-  // So publishing the projection takes the lock, briefly, for the rename alone —
-  // the expensive `stringify` happens before, outside. That is still the whole
-  // win: the O(n) work leaves the critical section even though the O(1) rename
-  // stays. Feature 2.3 removes this dance entirely by giving the mutex its own
-  // file, at which point the projection is just another derived artifact.
+  // With the mutex moved to its own f.lock, that constraint is simply gone. The
+  // projection is now an ordinary derived artifact, exactly like the index, and
+  // it publishes the same way: write a private temp, rename, and let the offset
+  // arbiter decide who wins when two writers race.
+  //
+  // The arbiter reads the INDEX's offset rather than the yaml's, because YAML
+  // has nowhere to put one — it is the user-facing projection, not a container
+  // for our bookkeeping. Both files are published from the same `lastOffset` in
+  // the same pass, so the index's recorded offset is a faithful stand-in for how
+  // current the projection on disk is.
   function publishYaml() {
-    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), outside the lock
-    const tmp = `${f.yaml}.${process.pid}.tmp`
-    writeFileSync(tmp, yamlStr)
-    let myLock
-    try { myLock = acquireLock(f) } catch { try { unlinkSync(tmp) } catch { } ; return }
-    try {
-      renameSync(tmp, f.yaml)          // publish + release in one atomic step
-      try { unlinkSync(myLock) } catch { }
-    } catch (e) {
-      try { renameSync(myLock, f.yaml) } catch { }
-      try { unlinkSync(tmp) } catch { }
-    }
+    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), no lock held
+    publishDerived({
+      file: f.yaml,
+      content: yamlStr,
+      offset: lastOffset,
+      readOffset: () => indexOffsetOnDisk(),
+    })
   }
 
-  // Kept for close(), which publishes while already holding the lock.
+  // Kept for close(), which publishes while already holding the lock. Releasing
+  // is now a separate, explicit act: it used to be a side effect of renaming the
+  // projection into place, because that rename WAS the release. With a dedicated
+  // mutex the two are independent, and saying so costs one line.
   function flushYaml(projection, myLock) {
     const yamlStr = stringify(projection, { collectionStyle: 'block' })
-    writeFileSync(f.yaml + '.tmp', yamlStr)
+    const tmp = `${f.yaml}.${process.pid}.tmp`
+    writeFileSync(tmp, yamlStr)
     saveIndex()
-    renameSync(f.yaml + '.tmp', f.yaml)     // release lock
-    try { unlinkSync(myLock) } catch { }
+    renameSync(tmp, f.yaml)
+    releaseLock(myLock, f.lock)
   }
 
   function flush() {
@@ -292,7 +275,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
 
     // ── Acquire lock (spin ≤ 1000ms) ─────────────────────────────────────────
     if (t) t.lockWaitStart = t.precomputeEnd
-    const myLock = acquireLock(f)
+    const myLock = acquireLock(f.lock)
     if (t) t.lockAcquired = Date.now()   // seção crítica começa aqui
 
     try {
@@ -343,7 +326,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // workers hit the lock timeout. `stringify` of a 100k projection alone is
       // ~790ms, and it ran with the lock held.
       const yieldFlush = ++flushCount % 100 === 0
-      renameSync(myLock, f.yaml)        // release
+      releaseLock(myLock, f.lock)       // release: rename the mutex back, nothing else
       if (t) t.lockReleased = Date.now()   // seção crítica termina aqui
 
       // ── Publish derived state, lock released ─────────────────────────────
@@ -357,7 +340,14 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
         TRANSITION('io:write', { entity: name, key: short.p, payload })
       }
     } catch (e) {
-      if (!existsSync(f.yaml)) try { renameSync(myLock, f.yaml) } catch { }
+      // Put the mutex back. Under the old protocol this branch had to guess:
+      // the lock and the projection were the same file, so restoring one could
+      // resurrect a stale copy of the other, and the `existsSync` guard was
+      // there to avoid overwriting a projection a different writer had already
+      // published. With a dedicated 0-byte mutex there is no such ambiguity —
+      // releasing is unconditional, and it must happen or every other writer
+      // waits out the full timeout for a lock nobody holds.
+      try { releaseLock(myLock, f.lock) } catch { }
       throw e
     }
 
@@ -401,20 +391,30 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   return {
     open(initPayload) {
       if (!existsSync(dirname(f.dash))) mkdirSync(dirname(f.dash), { recursive: true })
-      // Race-safe genesis: exclusive-create .yaml as the once-only mutex.
-      // First caller wins and writes genesis; losers spin until free state then sync.
+
+      // No mutex to create. Under presence-semantics the free state is "no
+      // f.lock.* on disk", which a fresh directory already satisfies — so the
+      // once-only birth ceremony this line used to perform, and the whole class
+      // of bug that came with getting it wrong, are simply gone. See the
+      // protocol note at the top of io-append.js.
+
       if (!existsSync(f.dash) || statSync(f.dash).size === 0) {
+        // Genesis under the ordinary lock. This used to need a protocol of its
+        // own — exclusive-create f.yaml as a one-shot mutex, winner writes
+        // genesis, losers spin on a compound condition waiting for the data to
+        // appear. All of that existed because the projection and the mutex were
+        // the same file, so the file's birth and the lock's birth were the same
+        // event and had to be raced together.
+        //
+        // Now they are separate files. The lock already exists, so genesis is
+        // just the first write like any other: take the lock, look again (the
+        // winner may have finished while we waited), write or sync.
+        const myLock = acquireLock(f.lock)
         try {
-          closeSync(openSync(f.yaml, 'wx'))   // atomic exclusive create — winner only
-          writeGenesis(initPayload)
-        } catch (e) {
-          if (e.code !== 'EEXIST') throw e
-          // Another process is writing genesis — wait for free state then sync
-          const deadline = Date.now() + 5000
-          while (Date.now() < deadline) {
-            if (existsSync(f.dash) && statSync(f.dash).size > 0 && existsSync(f.yaml)) break
-          }
-          syncFrom(0)
+          if (!existsSync(f.dash) || statSync(f.dash).size === 0) writeGenesis(initPayload)
+          else syncFrom(0)
+        } finally {
+          try { releaseLock(myLock, f.lock) } catch { }
         }
       } else {
         // ponytail: index's lastOffset/lastKey track the raw append position, not
@@ -423,33 +423,10 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
         // Full rebuild from the dash log instead; upgrade to real delta-sync if
         // profiling shows open() cost matters for large logs.
         syncFrom(0)
-        if (!existsSync(f.yaml)) {
-          // f.yaml is transiently gone because another process holds the lock
-          // (renamed it to f.yaml.<pid>). Rebuilding it here must go through
-          // the same lock — an unlocked write + saveIndex() raced concurrent
-          // flush()es and corrupted the index.
-          let myLock
-          try { myLock = acquireLock(f) } catch { myLock = null }
-          if (myLock) {
-            // Lock held: acquireLock renamed f.yaml -> myLock, so if f.yaml is
-            // back, another writer released between our existsSync and acquire —
-            // just restore and move on. Otherwise rebuild it under the lock.
-            try {
-              if (existsSync(f.yaml)) {
-                try { unlinkSync(myLock) } catch { }
-              } else {
-                const tmp = f.yaml + '.tmp'
-                writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' }))
-                saveIndex()
-                renameSync(tmp, f.yaml)
-                try { unlinkSync(myLock) } catch { }
-              }
-            } catch (e) {
-              try { renameSync(myLock, f.yaml) } catch { }
-              throw e
-            }
-          }
-        }
+        // The ~30-line rebuild-f.yaml-under-the-lock dance that stood here is
+        // gone. It handled "f.yaml is transiently missing because someone holds
+        // the lock" — a state that can no longer occur, because holding the lock
+        // renames f.lock, not f.yaml. The projection is always on disk now.
         genesisWritten = true
       }
     },
@@ -457,8 +434,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (_log.length) flush()
       // Flush pending yaml/index if not already up-to-date
       if (flushCount % 100 !== 0 && existsSync(f.dash)) {
-        const myLock = acquireLock(f)
-        try { flushYaml(projection, myLock) } catch { try { renameSync(myLock, f.yaml) } catch { } }
+        const myLock = acquireLock(f.lock)
+        try { flushYaml(projection, myLock) } catch { try { releaseLock(myLock, f.lock) } catch { } }
       }
     },
     in: write,
