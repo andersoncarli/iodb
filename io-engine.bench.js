@@ -73,27 +73,56 @@ function summarize(samples) {
 // the projection is built once for the whole batch instead of once per write.
 const SEED_BATCH = 1000
 
-function seed(io, count) {
+// Seeding gets its own budget, separate from the measurement window: it is
+// setup, not signal, but it is also where an unfenced cell spends its minutes.
+const SEED_BUDGET_MS = 1500
+
+// Seeding is fenced on time too, and reports what it actually reached. The
+// store size is a TARGET, not a promise: on a slow machine a cell settles for a
+// smaller store rather than blowing the budget, and the printed size says which
+// store the numbers describe. A benchmark that lies about its inputs to hit a
+// round number is worse than one that reports a smaller store honestly.
+function seed(io, count, budgetMs = SEED_BUDGET_MS) {
+  const deadline = Date.now() + budgetMs
+  let written = 0
   for (let b = 0; b < count; b += SEED_BATCH) {
+    if (Date.now() >= deadline) break
     const n = Math.min(SEED_BATCH, count - b)
     for (let i = 0; i < n; i++) io.in({ ['seed' + (b + i)]: i }, { flush: 0 })
     io.flush()
+    written += n
   }
+  return written
 }
 
-// ── Single-process run: seed N records (batched), then WRITES marginal
-// single-record flushes, each timed individually — that's the metric: cost
-// of ONE real write once the store already holds `seedCount` records.
-function runSingleProcess(dir, seedCount, writes) {
+// Per-cell time budget. A benchmark that takes minutes is not a slow benchmark,
+// it is a benchmark nobody runs — and one that never becomes a regression guard.
+// The target band is 100-1000ms per cell: long enough for percentiles to mean
+// something, short enough that the whole grid stays a routine command.
+const CELL_BUDGET_MS = 800
+
+// ── Single-process run: seed N records (batched), then marginal single-record
+// flushes, each timed individually — that's the metric: cost of ONE real write
+// once the store already holds `seedCount` records.
+
+// TIME FENCE, not a cycle count. A fixed number of writes makes the cell's
+// duration a function of how slow the engine is — exactly the quantity being
+// measured — so the cheap cells finish instantly and the expensive ones blow
+// the budget. Fencing on elapsed time inverts that: every cell costs the same
+// wall clock, and it is the SAMPLE COUNT that varies and reports how fast the
+// engine was. `writes` becomes a ceiling, not a target.
+function runSingleProcess(dir, seedCount, writes, budgetMs = CELL_BUDGET_MS) {
   const base = join(dir, 'LOG')
   const samples = []
   const io = IO(base, { reduce: merge, initial: {}, bench: (t) => samples.push(t) })
   io.open({ _entity: 'bench' })
-  seed(io, seedCount)
+  const actualSize = seed(io, seedCount)
   samples.length = 0   // discard seeding batches, keep only the marginal writes below
-  for (let i = 0; i < writes; i++) io.in({ ['k' + i]: i })
+  const deadline = Date.now() + budgetMs
+  let i = 0
+  while (i < writes && Date.now() < deadline) io.in({ ['k' + i]: i }), i++
   io.close()
-  return samples
+  return { samples, actualSize }
 }
 
 // ── Multi-process run: seed once, then spawn PROCS workers writing concurrently ─
@@ -104,7 +133,11 @@ const [, , base, writes, outFile] = process.argv;
 const samples = [];
 const io = IO(base, { reduce: merge, initial: {}, bench: (t) => samples.push(t) });
 io.open();
-for (let i = 0; i < Number(writes); i++) {
+// Same time fence as the single-process path: writes is a ceiling, the clock
+// decides. Otherwise the slowest cell — which is the one under contention —
+// is exactly the one that runs longest.
+const deadline = Date.now() + Number(process.argv[5] || 800);
+for (let i = 0; i < Number(writes) && Date.now() < deadline; i++) {
   io.in({ ['p' + process.pid + '_' + i]: i });
 }
 io.close();
@@ -116,7 +149,7 @@ async function runMultiProcess(dir, seedCount, procs, writesPerProc) {
   const base = join(dir, 'LOG')
   const seedIo = IO(base, { reduce: merge, initial: {} })
   seedIo.open({ _entity: 'bench' })
-  seed(seedIo, seedCount)   // batched — see `seed()` for why one-flush-per-record isn't viable here
+  const actualSize = seed(seedIo, seedCount)   // batched — see `seed()` for why one-flush-per-record isn't viable here
   seedIo.close()
 
   const worker = join(dir, 'worker.mjs')
@@ -127,7 +160,7 @@ async function runMultiProcess(dir, seedCount, procs, writesPerProc) {
   for (let p = 0; p < procs; p++) {
     const outFile = join(dir, `out.${p}.json`)
     outFiles.push(outFile)
-    kids.push(Bun.spawn(['bun', worker, base, String(writesPerProc), outFile], {
+    kids.push(Bun.spawn(['bun', worker, base, String(writesPerProc), outFile, String(CELL_BUDGET_MS)], {
       stdout: 'pipe', stderr: 'pipe',
     }))
   }
@@ -150,7 +183,7 @@ async function runMultiProcess(dir, seedCount, procs, writesPerProc) {
   for (const outFile of outFiles) {
     if (existsSync(outFile)) samples = samples.concat(JSON.parse(require('fs').readFileSync(outFile, 'utf8')))
   }
-  return { samples, timedOut, procs }
+  return { samples, timedOut, procs, actualSize }
 }
 
 function fmtRow(label, s) {
@@ -167,25 +200,41 @@ function printCell(storeSize, procs, summary, elapsedMs, totalWrites, timedOut) 
 
 async function runGrid(sizes, concurrencies, writesPerCell) {
   const results = []
+  const overBudget = []
   for (const size of sizes) {
     for (const procs of concurrencies) {
       const dir = mkdtempSync(join(tmpdir(), 'iodb-bench-'))
       try {
         const start = Date.now()
-        let samples, timedOut = 0
+        let samples, timedOut = 0, actualSize = size
         if (procs === 1) {
-          samples = runSingleProcess(dir, size, writesPerCell)
+          ;({ samples, actualSize } = runSingleProcess(dir, size, writesPerCell))
         } else {
           const perProc = Math.ceil(writesPerCell / procs)
-          ;({ samples, timedOut } = await runMultiProcess(dir, size, procs, perProc))
+          ;({ samples, timedOut, actualSize } = await runMultiProcess(dir, size, procs, perProc))
         }
         const elapsed = Date.now() - start
         const summary = summarize(samples)
-        printCell(size, procs, summary, elapsed, samples.length, timedOut)
-        results.push({ size, procs, summary, elapsed, n: samples.length, timedOut })
+        printCell(actualSize, procs, summary, elapsed, samples.length, timedOut)
+        results.push({ size: actualSize, procs, summary, elapsed, n: samples.length, timedOut })
+        if (elapsed > CELL_BUDGET_MS) overBudget.push({ size, procs, elapsed })
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
+    }
+  }
+  if (overBudget.length) {
+    const multi = overBudget.filter(c => c.procs > 1)
+    console.log(`\n⚠️  ${overBudget.length} celula(s) acima do orcamento de ${CELL_BUDGET_MS}ms:`)
+    for (const c of overBudget)
+      console.log(`    size=${c.size} procs=${c.procs}: ${(c.elapsed / 1000).toFixed(1)}s`)
+    if (multi.length) {
+      console.log('')
+      console.log('    Celulas multi-processo nao cabem no orcamento por um limite do ENGINE,')
+      console.log('    nao do bench: sob contencao os workers esperam no lock, cujo timeout')
+      console.log('    minimo e 1000ms (io-append.js lockTimeout). Fencear o laco de escrita')
+      console.log('    nao ajuda — o tempo e gasto ESPERANDO, nao escrevendo. E a feature 2.3')
+      console.log('    (lockfile dedicado) que ataca isso; ate la, o estouro e o proprio dado.')
     }
   }
   return results
@@ -196,10 +245,27 @@ async function runGrid(sizes, concurrencies, writesPerCell) {
 // file for the sanity test below) does not also run the whole grid.
 const isMain = import.meta.main
 if (isMain) {
+  // Default grid is chosen to FIT the per-cell budget, not to be impressive.
+  // 100k stayed in the 2.1 baseline because that baseline was the point — the
+  // 733ms critical section it recorded is exactly what 2.2 set out to kill. But
+  // a cell that takes a minute cannot be run routinely, so 100k is now opt-in
+  // via --full: the default grid has to stay cheap enough to actually run.
   const quick = process.argv.includes('--quick')
-  const sizes = quick ? [1000] : [1000, 10000, 100000]
-  const concurrencies = quick ? [1, 8] : [1, 8]
-  const writesPerCell = quick ? 100 : 200
+  const full = process.argv.includes('--full')
+  //
+  // Sizes are chosen so a cell fits the time budget, and the ceiling is set by
+  // open(), not by the writes being measured: a worker's open() does syncFrom(0)
+  // — a full projection rebuild — which costs 15ms at 1k, 260ms at 10k and
+  // 1176ms at 20k. With 8 workers each paying that before writing a single
+  // record, anything past ~5k cannot fit an 800ms cell no matter how the write
+  // loop is fenced. That ceiling is exactly what features 2.4/2.5 remove; until
+  // then the honest move is to measure sizes that fit and say why.
+  //
+  // --full keeps the old 1k/10k/100k grid for the rare deep run. It will blow
+  // the budget, loudly, by design.
+  const sizes = quick ? [1000] : full ? [1000, 10000, 100000] : [500, 2000, 5000]
+  const concurrencies = [1, 8]
+  const writesPerCell = quick ? 100 : full ? 200 : 200
   console.log(`io-engine.bench.js — grid: sizes=${sizes.join(',')} concurrencies=${concurrencies.join(',')} writes/cell=${writesPerCell}`)
   await runGrid(sizes, concurrencies, writesPerCell)
 }

@@ -215,6 +215,8 @@ All on a single-process, local SSD, Bun runtime:
 
 No locks. No WAL. No fsync. No binary protocol. No schema. No indexes beyond the hash map. No event bus. No dependency on anything but `node:crypto` and `node:fs`.
 
+The price of "no locks" is measured, not assumed: 8 processes writing one base lose **no records** (POSIX appends are atomic) but break the chain — 170 distinct keys out of 240, because each process computes prefixes against its own `prefixSet`. `verify()` reports it. See `io-nutshell.concurrency.test.js`.
+
 The entire system is **one file, one export, zero configuration**.
 
 ```

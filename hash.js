@@ -119,17 +119,25 @@ export function shortestPrefix(fullKey, bitsSet, minBits = 1) {
     const p = binaryKey.slice(0, n)
     if (!bitsSet.has(p)) {
       const v = parseInt(p, 2)
-      return { p: toB64(v), n, bits: p }
+      // `key` is an alias of `p`: io-engine reads `.p`, the nutshell reads
+      // `.key`. Both names ship so one module serves both callers (feature 2.2).
+      const key = toB64(v)
+      return { p: key, key, n, bits: p }
     }
   }
 
-  return { p: fullKey, n: binaryKey.length, bits: binaryKey }
+  return { p: fullKey, key: fullKey, n: binaryKey.length, bits: binaryKey }
 }
 
 /**
  * Verify chain integrity.
  * Records #0 and #1 are reserved headers — skip crypto check.
  * All other records: stored key must be a binary prefix of the recomputed full key.
+ *
+ * Accepts either record shape (feature 2.2 — one function, both callers):
+ *   { [key]: payload }    io-engine's line format
+ *   { key, payload }      the nutshell's parseLine output
+ * The chain maths is identical; only the envelope differs.
  */
 export function verify(recs) {
   if (recs.length < 1) return { valid: true, length: 0 }
@@ -137,8 +145,9 @@ export function verify(recs) {
   for (let i = 0; i < recs.length; i++) {
     const r = recs[i]
     if (!r) continue
-    const storedKey = Object.keys(r)[0]
-    const payload = r[storedKey]
+    const explicit = typeof r.key === 'string' && 'payload' in r
+    const storedKey = explicit ? r.key : Object.keys(r)[0]
+    const payload = explicit ? r.payload : r[storedKey]
     if (storedKey === '0') { prevKey = '0'; continue }
     if (storedKey === '1') { prevKey = '1'; continue }
     const expectedFull = makeFullKey(payload, prevKey)

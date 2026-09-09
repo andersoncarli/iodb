@@ -1,0 +1,174 @@
+// io-nutshell.concurrency.test.js — feature 3.2
+//
+// Characterisation, not a regression guard. The nutshell declares "No locks. No
+// WAL. No fsync." and this file measures what that costs under real
+// multi-process contention — it does not assert the cost away.
+//
+// The failure mode is the INVERSE of the one feature 1.2 found in io-engine:
+//
+//                     io-engine (pre-1.2)   nutshell
+//   crashed workers   ENOENT on rename      0
+//   records on disk   silently lost         all of them
+//   verify().valid    true (!)              false
+//
+// io-engine lost records and still reported {valid:true} — verify() audits what
+// survived, not what vanished. The nutshell keeps every record and reports the
+// break. That inversion is the point: the intrinsic proof detects the damage the
+// architecture permits.
+//
+// Mechanism: prefixSet and prevKey are per-process closure state
+// (io-nutshell.js:65-68) and the appendFileSync (:117) takes no lock. POSIX
+// appends under PIPE_BUF are atomic, so nothing is lost — but each process
+// chains from the prevKey it believes is last, and computes shortestPrefix
+// against a prefixSet blind to the other writers' keys. Hence the collisions.
+//
+// Coordinated mode ({ lock: true }) is feature 2.2's delivery, which extracts
+// the critical section as a shared io-append.js module. When that lands, this
+// test keeps describing the DEFAULT (unlocked) behaviour, which stays true.
+//
+// Spawns real OS processes — Promise.all in-process cannot reproduce this (one
+// event loop, no true parallel append).
+
+import { mkdtempSync, rmSync, writeFileSync } from "fs"
+import { tmpdir } from "os"
+import { join } from "path"
+import IO from "./io-nutshell.js"
+
+const ENGINE = join(import.meta.dir, "io-nutshell.js")
+
+const WORKER_SRC = `
+import IO from ${JSON.stringify(ENGINE)}
+const [, , dir, n] = process.argv
+const io = IO('LOG', { path: dir })
+for (let i = 0; i < Number(n); i++) io.in({ ['k' + process.pid + '_' + i]: i })
+`
+
+// Spawns `procs` writers against one shared base and reports what landed.
+async function run(procs, writes) {
+  const dir = mkdtempSync(join(tmpdir(), "nut-conc-"))
+  try {
+    const worker = join(dir, "worker.mjs")
+    writeFileSync(worker, WORKER_SRC)
+
+    const kids = []
+    for (let p = 0; p < procs; p++)
+      kids.push(Bun.spawn(["bun", worker, dir, String(writes)], { stdout: "pipe", stderr: "pipe" }))
+
+    const results = await Promise.all(
+      kids.map(async k => ({ code: await k.exited, err: await new Response(k.stderr).text() }))
+    )
+
+    const io = IO("LOG", { path: dir })
+    // Genesis records '0' and '1' are headers, not writer output.
+    const data = io.records().filter(r => r.key !== "0" && r.key !== "1")
+
+    return {
+      crashed: results.filter(r => r.code !== 0).length,
+      errs: results.map(r => r.err).filter(Boolean),
+      records: data.length,
+      distinct: new Set(data.map(r => r.key)).size,
+      valid: io.verify().valid,
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test(
+  "3.2 — single writer: chain holds, keys unique",
+  async ({ check }) => {
+    const WRITES = 30
+    const r = await run(1, WRITES)
+
+    // The control. Without it, the multi-process result below could not be told
+    // apart from a plain bug in the engine.
+    check(r.crashed, 0)
+    check(r.records, WRITES)
+    check(r.distinct, WRITES)
+    check(r.valid, true)
+  },
+  { timeout: 60000 }
+)
+
+test(
+  "3.2 — 8 concurrent writers: no loss, but the chain breaks (unlocked by design)",
+  async ({ check }) => {
+    const PROCS = 8, WRITES = 30
+    const EXPECTED = PROCS * WRITES
+    const r = await run(PROCS, WRITES)
+
+    // ── Invariants: true on every run, whatever the scheduler does ─────────
+
+    // Nobody crashes: a bare appendFileSync has no rename window to lose.
+    check(r.crashed, 0)
+
+    // Nothing is lost: POSIX appends below PIPE_BUF are atomic. This is the
+    // half the pre-1.2 io-engine got wrong — it lost records AND reported
+    // {valid:true}, because verify() audits what survived, not what vanished.
+    check(r.records, EXPECTED)
+
+    // The two failure modes are mutually exclusive, and that is the real
+    // claim of this feature: a broken chain always comes with colliding keys,
+    // never with a clean one.
+    check(r.valid === false ? r.distinct < EXPECTED : r.distinct === EXPECTED, true)
+
+    // ── Observation, not assertion ────────────────────────────────────────
+    //
+    // Whether the chain actually breaks depends on the processes INTERLEAVING,
+    // and that is the scheduler's call, not ours. Under heavy load the eight
+    // writers can serialise enough to produce a valid chain — asserting
+    // valid===false would then fail for a reason that says nothing about the
+    // engine. That is a granularity defect in the test, not a finding.
+    //
+    // So the run is reported rather than asserted. What the feature claims is
+    // the invariant above; the interleaving is what makes the claim reachable.
+    if (r.valid) console.log(`  [note] no interleaving this run — chain stayed valid (${r.distinct}/${EXPECTED} distinct)`)
+    else console.log(`  [note] chain broke as expected: ${r.distinct}/${EXPECTED} distinct keys`)
+  },
+  { timeout: 60000 }
+)
+
+// The interleaving above is the scheduler's to grant. This one forces it: two
+// IO() handles on the same log, in ONE process. No spawn, no timing, no load
+// sensitivity — the second handle simply holds state from before the first one
+// wrote, which is the condition that breaks the chain.
+//
+// ⚠ FINDING (2026-09-08, out of this sprint's scope — reported, not fixed):
+// this deterministic case exposes something WORSE than a broken chain, and it
+// contradicts the headline claim above. A second handle starting from empty
+// state emits a data record carrying the RESERVED key '1' — and verify()
+// skips reserved keys as headers, so it returns {valid:true} over real damage.
+// Measured: 20 of 20 runs.
+//
+// That is precisely the io-engine pre-1.2 failure the rest of this file says
+// the nutshell does NOT have: rubber-stamping what it did not check. The
+// intrinsic proof is only as good as its refusal to trust reserved keys, and
+// right now it trusts them. Fixing it belongs with the genesis/reserved-key
+// work in 1.4 / 2.3, not here.
+test(
+  "3.2 — stale state collides with RESERVED keys, and verify() misses it",
+  async ({ check, withTempDir }) => {
+    await withTempDir(async dir => {
+      const a = IO("LOG", { path: dir })
+      const b = IO("LOG", { path: dir })   // constructed before A writes: state is empty
+
+      a.in({ a1: 1 })
+      b.in({ b1: 1 })                      // B still believes the log is empty
+
+      const io = IO("LOG", { path: dir })
+      const all = io.records()
+
+      // Genesis is written once, by whoever got there first.
+      check(all.filter(r => r.key === "0").length, 1)
+
+      // The defect: a DATA record lands on a reserved key. Records past the
+      // two-record genesis header must never carry '0' or '1'.
+      const reservedData = all.slice(2).filter(r => r.key === "0" || r.key === "1")
+      check(reservedData.length > 0, true)
+
+      // ...and this is why it matters — verify() treats that record as a
+      // header and reports a clean chain over it.
+      check(io.verify().valid, true)
+    })
+  }
+)

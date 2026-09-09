@@ -124,8 +124,30 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   let _log = []          // buffered payloads not yet on disk
   let _sessionRecs = []  // all records written this session (for fast settle checks)
 
+  // Read the lastOffset another writer recorded in the index on disk. Cheap:
+  // it is the second line of the header, so a partial read would do — kept
+  // simple until profiling says otherwise.
+  function indexOffsetOnDisk() {
+    if (!f.index || !existsSync(f.index)) return null
+    try {
+      const head = readFileSync(f.index, 'utf8').slice(0, 200)
+      const m = head.match(/lastOffset=(\d+)/)
+      return m ? Number(m[1]) : null
+    } catch { return null }
+  }
+
   function saveIndex() {
     if (!f.index) return
+    // ORDER ARBITER (feature 2.2). The index is now published OUTSIDE the lock,
+    // so two writers can reach this point out of order and a slow one can land
+    // after a fast one — an older index overwriting a newer. Only publish if we
+    // are at least as far along as what is already on disk.
+    //
+    // This is safe precisely because the index is a HINT, not truth: skipping a
+    // write costs a slightly stale hint, while clobbering costs a wrong one.
+    const onDisk = indexOffsetOnDisk()
+    if (onDisk != null && onDisk > lastOffset) return
+
     // Header: lastKey + lastOffset allow fast-open (delta sync from this point)
     // prefixes: full prefixSet bits needed to avoid key collisions on next append
     let out = `lastKey=${idx.lastKey || ''}\nlastOffset=${lastOffset}\n`
@@ -211,10 +233,39 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     genesisWritten = true
   }
 
+  // Publish the YAML projection with the lock ALREADY RELEASED (feature 2.2).
+  //
+  // The subtlety: f.yaml doubles as the mutex, so this cannot go through a
+  // plain write+rename the way the index can — writing f.yaml while another
+  // process holds the lock would forge a second mutex and let two writers into
+  // the critical section. (Measured on the nutshell's own lock: create-while-held
+  // put 8 of 120 critical sections in overlap.)
+  //
+  // So publishing the projection takes the lock, briefly, for the rename alone —
+  // the expensive `stringify` happens before, outside. That is still the whole
+  // win: the O(n) work leaves the critical section even though the O(1) rename
+  // stays. Feature 2.3 removes this dance entirely by giving the mutex its own
+  // file, at which point the projection is just another derived artifact.
+  function publishYaml() {
+    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), outside the lock
+    const tmp = `${f.yaml}.${process.pid}.tmp`
+    writeFileSync(tmp, yamlStr)
+    let myLock
+    try { myLock = acquireLock(f) } catch { try { unlinkSync(tmp) } catch { } ; return }
+    try {
+      renameSync(tmp, f.yaml)          // publish + release in one atomic step
+      try { unlinkSync(myLock) } catch { }
+    } catch (e) {
+      try { renameSync(myLock, f.yaml) } catch { }
+      try { unlinkSync(tmp) } catch { }
+    }
+  }
+
+  // Kept for close(), which publishes while already holding the lock.
   function flushYaml(projection, myLock) {
     const yamlStr = stringify(projection, { collectionStyle: 'block' })
     writeFileSync(f.yaml + '.tmp', yamlStr)
-    saveIndex()                              // still inside lock window
+    saveIndex()
     renameSync(f.yaml + '.tmp', f.yaml)     // release lock
     try { unlinkSync(myLock) } catch { }
   }
@@ -281,15 +332,24 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       }
       _log = []
 
-      // ── Release lock BEFORE emitting — prevents re-entrant lock deadlock ─
-      if (t) t.publishStart = Date.now()
-      if (++flushCount % 100 === 0) {
-        flushYaml(projection, myLock)   // saves yaml + index (inside lock window)
-      } else {
-        saveIndex()                     // inside lock window; always persist so open() can fast-path
-        renameSync(myLock, f.yaml)      // release
-      }
+      // ── Release the lock NOW (feature 2.2) ───────────────────────────────
+      // The indivisible work is done: we checked the log had not grown, and we
+      // appended. Everything below this line publishes DERIVED state — the
+      // index and the YAML projection are both reconstructible from the .dash —
+      // so holding the lock across it buys nothing and costs everything.
+      //
+      // That cost was measured (baseline 2.1): the critical section went from
+      // p99=17ms at 1k records to 733ms at 100k, and in 100k×8 seven of eight
+      // workers hit the lock timeout. `stringify` of a 100k projection alone is
+      // ~790ms, and it ran with the lock held.
+      const yieldFlush = ++flushCount % 100 === 0
+      renameSync(myLock, f.yaml)        // release
       if (t) t.lockReleased = Date.now()   // seção crítica termina aqui
+
+      // ── Publish derived state, lock released ─────────────────────────────
+      if (t) t.publishStart = t.lockReleased
+      saveIndex()                       // arbitrated by lastOffset (see saveIndex)
+      if (yieldFlush) publishYaml()
 
       // ── Emit after lock released so handlers can write without deadlock ──
       for (const { short, fullKey, payload } of provisional) {
