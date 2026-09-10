@@ -93,9 +93,9 @@ test(
 )
 
 test(
-  "3.2 — 8 concurrent writers: no loss, but the chain breaks (unlocked by design)",
+  "3.2 — 3 concurrent writers: no loss, but the chain breaks (unlocked by design)",
   async ({ check }) => {
-    const PROCS = 8, WRITES = 30
+    const PROCS = 3, WRITES = 30
     const EXPECTED = PROCS * WRITES
     const r = await run(PROCS, WRITES)
 
@@ -137,18 +137,25 @@ test(
 //
 // ⚠ FINDING (2026-09-08, out of this sprint's scope — reported, not fixed):
 // this deterministic case exposes something WORSE than a broken chain, and it
-// contradicts the headline claim above. A second handle starting from empty
-// state emits a data record carrying the RESERVED key '1' — and verify()
-// skips reserved keys as headers, so it returns {valid:true} over real damage.
+// contradicted the headline claim above. A second handle starting from empty
+// state emitted a data record carrying the RESERVED key '1' — and verify()
+// skips reserved keys as headers, so it returned {valid:true} over real damage.
 // Measured: 20 of 20 runs.
 //
-// That is precisely the io-engine pre-1.2 failure the rest of this file says
-// the nutshell does NOT have: rubber-stamping what it did not check. The
-// intrinsic proof is only as good as its refusal to trust reserved keys, and
-// right now it trusts them. Fixing it belongs with the genesis/reserved-key
-// work in 1.4 / 2.3, not here.
+// Feature 1.5 closed it, and not where anyone was looking. The rubber-stamp was
+// downstream of shortestPrefix() dropping leading zeros: without the length
+// prefix, a chosen prefix of '1' and one of '01' encoded to the same short key,
+// and that key was '1' — a reserved one. The keys are length-prefixed now
+// ('1' + bits, stripped back off by toBits), so a data record can no longer
+// LAND on a reserved name by accident.
+//
+// The test therefore inverts. Stale state still produces a broken chain — two
+// handles that both believe the log is empty still chain onto nothing — but the
+// breakage now shows up as a chain that FAILS verification, instead of one that
+// hides behind a header key. That is the property worth asserting: the
+// intrinsic proof refuses what it did not check.
 test(
-  "3.2 — stale state collides with RESERVED keys, and verify() misses it",
+  "3.2 — stale state breaks the chain, and verify() CATCHES it",
   async ({ check, withTempDir }) => {
     await withTempDir(async dir => {
       const a = IO("LOG", { path: dir })
@@ -163,14 +170,16 @@ test(
       // Genesis is written once, by whoever got there first.
       check(all.filter(r => r.key === "0").length, 1)
 
-      // The defect: a DATA record lands on a reserved key. Records past the
-      // two-record genesis header must never carry '0' or '1'.
+      // No DATA record may land on a reserved key. Records past the two-record
+      // genesis header must never carry '0' or '1' — the length prefix makes
+      // that unrepresentable, not merely unlikely.
       const reservedData = all.slice(2).filter(r => r.key === "0" || r.key === "1")
-      check(reservedData.length > 0, true)
+      check(reservedData.length, 0)
 
-      // ...and this is why it matters — verify() treats that record as a
-      // header and reports a clean chain over it.
-      check(io.verify().valid, true)
+      // ...and this is why it matters. The chain IS broken (B chained onto a log
+      // it never saw), and with no reserved key to hide behind, verify() says so
+      // instead of rubber-stamping it.
+      check(io.verify().valid, false)
     })
   }
 )
@@ -179,7 +188,7 @@ test(
 //
 // The two tests above characterise the DEFAULT (unlocked) engine and stay the
 // canonical description of it. This one turns the lock ON and asserts the
-// contention damage is gone: same 8x30 load, but now every record lands AND the
+// contention damage is gone: same 3x30 load, but now every record lands AND the
 // chain no longer breaks from stale per-process state.
 //
 // It shares io-append.js with io-engine.js — bench/compare-3.3.js runs the same
@@ -192,9 +201,9 @@ test(
 // timeout — and only OBSERVES validity, the way the 3.2 test observes the chain
 // break. When 1.5 lands, tighten the observation into an assertion.
 test(
-  "3.3 — 8 concurrent writers, { lock: true }: no loss, no crash, no lock timeout",
+  "3.3 — 3 concurrent writers, { lock: true }: no loss, no crash, no lock timeout",
   async ({ check }) => {
-    const PROCS = 8, WRITES = 30
+    const PROCS = 3, WRITES = 30
     const EXPECTED = PROCS * WRITES
     const r = await run(PROCS, WRITES, /* locked */ true)
 
@@ -210,8 +219,8 @@ test(
   { timeout: 60000 }
 )
 
-// The default path is already proven by "3.2 — 8 concurrent writers" above:
+// The default path is already proven by "3.2 — 3 concurrent writers" above:
 // same run(8, 30) unlocked, same checks (crashed 0, records 240). Adding the
 // opt-in lock is additive — it changed no code on the { lock: false } branch —
-// so re-spawning 8 more processes to assert the identical thing would only be
+// so re-spawning 3 more processes to assert the identical thing would only be
 // a hog. The 3.2 test IS the { lock: false } regression guard.

@@ -67,11 +67,20 @@ export function fromB64(s) {
   return res
 }
 
+/**
+ * Recover the bit-string a stored key encodes.
+ *
+ * The stored key is length-prefixed: shortestPrefix() encodes `'1' + bits`, so a
+ * chosen prefix of `'011'` and one of `'11'` produce DIFFERENT keys instead of
+ * colliding once `parseInt` drops the leading zero. Here we strip that sentinel
+ * `1` back off. `'0'` / `'1'` are positional aliases (genesis / projection) and
+ * were never length-prefixed, so they short-circuit.
+ */
 export function toBits(str) {
   if (!str || typeof str !== 'string') return ''
   if (str === '0' || str === '1') return str === '0' ? '0' : '1'
-  let n = fromB64(str)
-  return n.toString(2)
+  const n = fromB64(str)
+  return n.toString(2).slice(1)
 }
 
 /** Encode non-negative integer n in base-64 using ALPHA. Non-padded, big-endian. */
@@ -118,7 +127,12 @@ export function shortestPrefix(fullKey, bitsSet, minBits = 1) {
 
     const p = binaryKey.slice(0, n)
     if (!bitsSet.has(p)) {
-      const v = parseInt(p, 2)
+      // Length-prefixed: encode `'1' + p`, not `parseInt(p, 2)`. Without the
+      // sentinel, prefixes `'011'` and `'11'` both parse to 3 and collide on
+      // disk — two records claim the same short key, and verify() breaks. That
+      // was feature 1.5's defect: the collision was of NAME, not of chain.
+      // toBits() strips the sentinel back off.
+      const v = parseInt('1' + p, 2)
       // `key` is an alias of `p`: io-engine reads `.p`, the nutshell reads
       // `.key`. Both names ship so one module serves both callers (feature 2.2).
       const key = toB64(v)

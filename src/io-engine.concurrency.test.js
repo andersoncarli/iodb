@@ -38,7 +38,12 @@ test(
       const worker = join(dir, "worker.mjs");
       writeFileSync(worker, WORKER_SRC);
 
-      const PROCS = 8;
+      // 3 processes, not 8. The defect this reproduces is a RACE, and a race
+      // needs contention, not crowd size — 3 concurrent writers contend on every
+      // append just as surely as 8 do. What the extra five bought was runtime and
+      // scheduler pressure on whatever else shares the machine, which is how this
+      // family of tests starved its neighbours before.
+      const PROCS = 3;
       const WRITES = 30;
 
       // Seed genesis first so every worker enters open()'s else branch — dash

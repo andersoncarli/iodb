@@ -7,7 +7,13 @@ import {
 import { dirname, basename, join } from 'path'
 import { stringify } from 'yaml'
 import { EMIT, ON, OFF, TRANSITION } from '../../utils/src/bus.js'
-import { makeFullKey, shortestPrefix, verify, toBits, toB64 } from './hash.js'
+import { makeFullKey, shortestPrefix, verify, toBits, toB64, nano, positionToKeyLength } from './hash.js'
+import { makeBitmaps, allocKey, has as bmHas, add as bmAdd, levels as bmLevels, serialize, deserialize } from './index-bitmap.js'
+
+/** The `.index` layout this build writes and accepts. A file carrying anything
+ *  else is rebuilt from the .dash rather than guessed at. */
+const INDEX_V = '0.1.0'
+const INDEX_FORMAT = 'lrm-1'
 import { acquireLock, releaseLock, publishDerived, LOCK_TIMEOUT } from './adapters/io-append.js'
 
 /**
@@ -91,50 +97,114 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   let flushCount = 0
   let genesisWritten = false
   let idx = {
-    records: new Set(), prefixSet: new Set(),
+    records: new Set(),
+    // The allocator. `prefixSet`/`levels` used to be two views of this one fact,
+    // kept in sync by hand at four call sites; now there is one owner.
+    bitmaps: makeBitmaps(),
     shortMap: new Map(), hashMap: new Map(),
-    levels: {}, recordCount: 0,
+    recordCount: 0,
     lastKey: null,
+    // ts of the last record this in-memory state has seen. Copied onto the
+    // derived files when they publish, so each one records how current it is.
+    syncedAt: null,
   }
   let _log = []          // buffered payloads not yet on disk
   let _sessionRecs = []  // all records written this session (for fast settle checks)
 
   // Read the lastOffset another writer recorded in the index on disk. Cheap:
-  // it is the second line of the header, so a partial read would do — kept
-  // simple until profiling says otherwise.
+  // it is in the header, so a partial read would do — kept simple until
+  // profiling says otherwise.
   function indexOffsetOnDisk() {
+    const h = readIndexHeader()
+    return h ? h.lastOffset : null
+  }
+
+  /**
+   * Parse the `.index` header without paying for the body.
+   *
+   * `_format` is the compatibility gate (feature 1.5): a file whose format we do
+   * not recognise is not parsed at all. That costs a rebuild from the .dash,
+   * which is always available and always authoritative — cheap insurance against
+   * silently misreading a future layout as if it were this one.
+   */
+  function readIndexHeader() {
     if (!f.index || !existsSync(f.index)) return null
     try {
-      const head = readFileSync(f.index, 'utf8').slice(0, 200)
-      const m = head.match(/lastOffset=(\d+)/)
-      return m ? Number(m[1]) : null
+      const head = readFileSync(f.index, 'utf8').slice(0, 400)
+      const fmt = head.match(/_format=([\w.-]+)/)
+      if (fmt && fmt[1] !== INDEX_FORMAT) return null
+      const off = head.match(/lastOffset=(\d+)/)
+      const at = head.match(/syncedAt=(\d+)/)
+      return {
+        lastOffset: off ? Number(off[1]) : null,
+        syncedAt: at ? BigInt(at[1]) : null,
+      }
+    } catch { return null }
+  }
+
+  /**
+   * Load the bitmaps FROM the index instead of rebuilding them from the log.
+   *
+   * This is the line that ends the write-only index. Everything else in this
+   * feature — the per-level bitmaps, the versioned header, the syncedAt — exists
+   * so that this function can exist. Returns the offset the loaded state is good
+   * up to, or null if the file is missing, stale-formatted or unparseable, in
+   * which case the caller falls back to a full syncFrom(0).
+   */
+  function loadIndex() {
+    const h = readIndexHeader()
+    if (!h || h.lastOffset == null) return null
+    try {
+      const raw = readFileSync(f.index, 'utf8')
+      const body = raw.slice(raw.indexOf('\n', raw.lastIndexOf('syncedAt=')) + 1)
+      idx.bitmaps = deserialize(body)
+      idx.syncedAt = h.syncedAt
+      return h.lastOffset
     } catch { return null }
   }
 
   function saveIndex() {
     if (!f.index) return
-    // ORDER ARBITER (feature 2.2). The index is now published OUTSIDE the lock,
-    // so two writers can reach this point out of order and a slow one can land
-    // after a fast one — an older index overwriting a newer. Only publish if we
-    // are at least as far along as what is already on disk.
+    // ORDER ARBITER (feature 2.2, tightened by 1.5). Publication happens outside
+    // the .dash lock, so two writers reach this point out of order and a slow one
+    // can land after a fast one — an older index overwriting a newer.
     //
-    // This is safe precisely because the index is a HINT, not truth: skipping a
-    // write costs a slightly stale hint, while clobbering costs a wrong one.
-    const onDisk = indexOffsetOnDisk()
-    if (onDisk != null && onDisk > lastOffset) return
+    // The offset comparison alone was not enough to stop that: read-compare-write
+    // is not atomic, so both writers could read the same offset, both approve
+    // themselves, and the older content could still win the rename by arriving
+    // second. publishDerived() now takes the .index's OWN lock around the whole
+    // sequence, which is a different lock from the .dash's — so this still does
+    // not block a single append.
+    //
+    // The index is no longer merely a HINT (it is read at open() now), which is
+    // exactly why the window had to close: a stale hint cost a rescan, but a
+    // stale SOURCE costs a wrong allocation.
 
-    // Header: lastKey + lastOffset allow fast-open (delta sync from this point)
-    // prefixes: full prefixSet bits needed to avoid key collisions on next append
-    let out = `lastKey=${idx.lastKey || ''}\nlastOffset=${lastOffset}\n`
-    if (idx.prefixSet.size > 0) out += `prefixes=${[...idx.prefixSet].join(',')}\n`
-    for (const [lvl, d] of Object.entries(idx.levels))
-      out += `${lvl}${JSON.stringify({ count: d.count })}\n`
-    // PID-suffixed temp: the fixed `.index.tmp` name was shared across every
-    // process writing this base, so concurrent writers clobbered each other's
-    // temp mid write→rename (ENOENT on rename, or a silently corrupt index).
-    // A private temp + atomic rename is collision-free on POSIX.
-    const tmp = `${f.index}.${process.pid}.tmp`
-    writeFileSync(tmp, out); renameSync(tmp, f.index)
+    // Header, then one line per level.
+    //
+    // `prefixes=` is gone. It listed every chosen prefix as text, grew linearly
+    // with the record count, and — the actual defect — nobody ever read it back.
+    // The per-level bitmaps carry the same fact in fixed size per level, and
+    // loadIndex() above is what finally reads them.
+    //
+    // `syncedAt` is COPIED from the last record appended to the .dash, not
+    // generated here. A derived file is valid AT the ts it carries: stale means
+    // incomplete, not wrong. That is what lets open() align three files by
+    // taking the lowest ts and syncing the delta.
+    let out = `_v=${INDEX_V}\n_format=${INDEX_FORMAT}\n`
+    out += `lastKey=${idx.lastKey || ''}\nlastOffset=${lastOffset}\n`
+    out += `syncedAt=${idx.syncedAt ?? 0n}\n`
+    out += serialize(idx.bitmaps)
+    // The private temp + atomic rename that used to be written out here lives in
+    // publishDerived() now, along with the arbiter and the lock — one place where
+    // a derived file is put on disk, for both the .index and the .yaml.
+    publishDerived({
+      file: f.index,
+      content: out,
+      offset: lastOffset,
+      readOffset: () => indexOffsetOnDisk(),
+      lockBase: base, lockName: 'index',
+    })
   }
 
   // Incremental read: only bytes since `offset`
@@ -149,7 +219,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     const recs = buf.toString('utf8').split('\n').filter(Boolean).map(parseLine).filter(Boolean)
     projection = recs.reduce((acc, rec) => { try { return _reduce(acc, rec) } catch { return acc } }, projection)
     if (offset === 0) {
-      idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
+      bmAdd(idx.bitmaps, toBits('0')); bmAdd(idx.bitmaps, toBits('1'))
       idx.records.add('0'); idx.records.add('1')
     }
     for (const rec of recs) {
@@ -158,33 +228,55 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (key === '1') { idx.lastKey = '1'; continue }
       const fullKey = makeFullKey(payload, idx.lastKey)
       const bits = toBits(key)
-      idx.records.add(fullKey); idx.prefixSet.add(bits)
+      idx.records.add(fullKey); bmAdd(idx.bitmaps, bits)
       idx.shortMap.set(key, fullKey); idx.shortMap.set(fullKey, fullKey)
       idx.hashMap.set(fullKey, payload)
-      ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
       idx.lastKey = key
       idx.recordCount++
+      // The ts a derived file will carry. Advanced here so it tracks what this
+      // in-memory state has actually absorbed, whether the record came from our
+      // own append or from another writer's delta.
+      idx.syncedAt = nano()
       _sessionRecs.push(rec)  // accumulate so callers can skip disk re-reads
     }
     lastOffset = sz
     genesisWritten = true
   }
 
-  // Provisional key computation — uses a local copy of prefixSet, no side-effects.
-  // Single-record fast path skips the Set copy entirely.
+  /**
+   * Provisional key computation — NO side-effects on the shared bitmaps.
+   *
+   * This runs outside the lock and may be thrown away and recomputed, so it must
+   * not claim a name. It probes the real bitmaps for what is already taken and
+   * keeps its own `pending` set for what THIS batch has provisionally taken, so
+   * two records in one flush cannot pick the same prefix.
+   *
+   * The allocation is only made real inside the lock, where flush() calls
+   * bmAdd() on the keys that actually landed.
+   */
   function computeKeys(log, prevKey) {
-    if (log.length === 1) {
-      const payload = log[0], fullKey = makeFullKey(payload, prevKey)
-      const short = shortestPrefix(fullKey, idx.prefixSet)
-      return [{ fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevKey }]
+    const pending = new Set()
+    const taken = bits => pending.has(bits) || bmHas(idx.bitmaps, bits)
+    // Start the walk at the level the collection's size implies; a stale or low
+    // guess only costs extra probes, never a wrong name (feature 1.5).
+    const startAt = positionToKeyLength(idx.recordCount)
+    const pick = fullKey => {
+      const bits = toBits(fullKey)
+      for (let L = Math.max(1, startAt); L <= bits.length; L++) {
+        const p = bits.slice(0, L)
+        if (taken(p)) continue
+        pending.add(p)
+        const v = parseInt('1' + p, 2), key = toB64(v)
+        return { p: key, key, n: L, bits: p }
+      }
+      pending.add(bits)
+      return { p: fullKey, key: fullKey, n: bits.length, bits }
     }
-    const localSet = new Set(idx.prefixSet)
     let prevK = prevKey
     return log.map(payload => {
       const pk = prevK
       const fullKey = makeFullKey(payload, prevK)
-      const short = shortestPrefix(fullKey, localSet)
-      localSet.add(short.bits)
+      const short = pick(fullKey)
       prevK = short.p
       return { fullKey, short, line: serializeLine(short.p, payload, format) + '\n', payload, prevKey: pk }
     })
@@ -204,7 +296,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     const tmp = `${f.yaml}.${process.pid}.tmp`
     writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' })); renameSync(tmp, f.yaml)
     saveIndex()
-    idx.prefixSet.add(toBits('0')); idx.prefixSet.add(toBits('1'))
+    bmAdd(idx.bitmaps, toBits('0')); bmAdd(idx.bitmaps, toBits('1'))
     idx.records.add('0'); idx.records.add('1')
     idx.shortMap.set('0', '0'); idx.shortMap.set('1', '1')
     idx.lastKey = '1'
@@ -231,12 +323,16 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   // the same pass, so the index's recorded offset is a faithful stand-in for how
   // current the projection on disk is.
   function publishYaml() {
-    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), no lock held
+    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), .dash lock not held
     publishDerived({
       file: f.yaml,
       content: yamlStr,
       offset: lastOffset,
       readOffset: () => indexOffsetOnDisk(),
+      // The .yaml's OWN lock — last in the fixed order .dash → .index → .yaml.
+      // It does not block appends; it only serialises the read-compare-write
+      // against another process publishing the same projection.
+      lockBase: base, lockName: 'yaml',
     })
   }
 
@@ -286,23 +382,32 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     const _cNs0 = t ? process.hrtime.bigint() : 0n
 
     try {
-      // ── Verify chain: re-compute if another writer got in (size check only) ─
+      // ── Re-sync from disk, then re-compute keys ───────────────────────────
+      // Unconditional, not gated on a size check. The size check only tells us
+      // whether the log GREW; it cannot tell us whether the prefixes we picked
+      // outside the lock are still free. Under concurrency two writers can both
+      // pass the size check, both syncFrom() to the same offset, and both pick
+      // the SAME short prefix for DIFFERENT payloads — then append serially
+      // under this lock, and the log has a duplicate key (feature 1.5). The
+      // prefix allocation has to see what is actually on disk at the moment we
+      // hold the lock, so syncFrom + computeKeys run every time. syncFrom() is
+      // O(delta) and no-ops when nothing landed, so the cost is a statSync when
+      // uncontended — the same as the old check.
       if (t) t.verifyStatStart = Date.now()
-      const resynced = statSync(f.dash).size !== lastOffset
-      if (t) t.verifyStatEnd = Date.now()
-      if (resynced) {
-        if (t) t.recomputeStart = t.verifyStatEnd
-        syncFrom(lastOffset)
-        prevKey = idx.lastKey
-        provisional = computeKeys(_log, prevKey)
-        newProjection = provisional.reduce(
-          (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), { ...projection }
-        )
-        allBytes = Buffer.from(provisional.map(p => p.line).join(''))
-        if (t) t.recomputeEnd = Date.now()
-      }
+      syncFrom(lastOffset)
+      if (t) t.verifyStatEnd = t.recomputeStart = Date.now()
+      prevKey = idx.lastKey
+      provisional = computeKeys(_log, prevKey)
+      newProjection = provisional.reduce(
+        (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), { ...projection }
+      )
+      allBytes = Buffer.from(provisional.map(p => p.line).join(''))
+      if (t) t.recomputeEnd = Date.now()
 
       // ── Append log ────────────────────────────────────────────────────────
+      // syncFrom() above just set lastOffset to the real file size, and the lock
+      // is genuinely exclusive now (feature 1.5 fixed acquireLock), so no one
+      // else appends between there and here: our bytes are the only delta.
       if (t) t.appendStart = Date.now()
       appendFileSync(f.dash, allBytes)
       lastOffset += allBytes.length
@@ -312,14 +417,17 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       projection = newProjection
       for (const { short, fullKey, payload } of provisional) {
         const bits = short.bits
-        idx.prefixSet.add(bits); idx.records.add(fullKey)
+        bmAdd(idx.bitmaps, bits); idx.records.add(fullKey)
         idx.shortMap.set(short.p, fullKey); idx.shortMap.set(fullKey, fullKey)
         idx.hashMap.set(fullKey, payload)
-        ;(idx.levels[bits.length] ?? (idx.levels[bits.length] = { count: 0 })).count++
         idx.lastKey = short.p
         idx.recordCount++
         _sessionRecs.push({ [short.p]: payload })
       }
+      // One ts for the batch, taken after the append landed. The derived files
+      // published below both copy it, which is what makes "the triad is together
+      // when the three ts agree" an O(1) check at open() instead of a scan.
+      idx.syncedAt = nano()
       _log = []
 
       // ── Release the lock NOW (feature 2.2) ───────────────────────────────
@@ -424,11 +532,27 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
           try { releaseLock(myLock, f.lock) } catch { }
         }
       } else {
-        // ponytail: index's lastOffset/lastKey track the raw append position, not
-        // the (possibly stale, only-every-100th-flush) yaml snapshot — a fresh
-        // process's empty `projection` can't safely delta-sync from that offset.
-        // Full rebuild from the dash log instead; upgrade to real delta-sync if
-        // profiling shows open() cost matters for large logs.
+        // FAST OPEN (feature 1.5). The index is finally read, not just written.
+        //
+        // The old comment here explained why a full rebuild was unavoidable: the
+        // index's offset tracked the raw append position while `projection` had
+        // to come from the yaml snapshot, and the two were not in step, so a
+        // fresh process could not safely delta-sync from the index's offset.
+        //
+        // What changed is that the index now carries its own bitmaps. The two
+        // halves of open() have different sources and can be satisfied
+        // separately: the ALLOCATOR loads from the .index in O(size of index),
+        // and only the PROJECTION still needs the log. So we load the bitmaps
+        // first and let syncFrom() rebuild the projection over them — the
+        // records it re-reads simply re-assert bits that are already set, which
+        // is idempotent (bmAdd returns false and changes nothing).
+        //
+        // A missing, older-format or corrupt index costs exactly what the old
+        // path always paid, a rebuild from the .dash, and never a wrong answer:
+        // loadIndex() returns null and the bitmaps stay empty for syncFrom(0) to
+        // fill. That is the property the "corrupt the index" test asserts.
+        const at = loadIndex()
+        if (at == null) idx.bitmaps = makeBitmaps()
         syncFrom(0)
         // The ~30-line rebuild-f.yaml-under-the-lock dance that stood here is
         // gone. It handled "f.yaml is transiently missing because someone holds
