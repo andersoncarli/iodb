@@ -1,4 +1,4 @@
-// Roteiro de avaliacao — feature 2.3: o mutex ganhou arquivo proprio, e a
+// Roteiro de avaliacao — feature 4.3: o mutex ganhou arquivo proprio, e a
 // polaridade certa.
 //
 // A tese em duas partes. Primeira: enquanto f.yaml era simultaneamente a
@@ -14,7 +14,7 @@
 eval("grep -n 'lock:' src/io-engine.js", (out) => check(out.includes("lock:")))
 
 // 2. A engine adotou o protocolo de src/adapters/io-append.js em vez de manter uma copia.
-//    Duas implementacoes do mesmo lock divergem — foi por isso que a 2.2 o
+//    Duas implementacoes do mesmo lock divergem — foi por isso que a 4.2 o
 //    extraiu. Aqui provamos que a copia local sumiu de fato.
 eval("grep -c \"from './adapters/io-append.js'\" src/io-engine.js", (out) => check(out.trim(), "1"))
 eval("grep -c '^function acquireLock' src/io-engine.js", (out) => check(out.trim(), "0"))
@@ -45,18 +45,19 @@ eval("grep -c 'process.kill(pid, 0)' src/adapters/io-append.js", (out) => check(
 //    primeira escrita, sob o lock comum.
 eval("grep -c \"openSync(f.yaml, 'wx')\" src/io-engine.js", (out) => check(out.trim(), "0"))
 
-// 6. A publicacao da projecao NAO readquire o lock. Sob a 2.2 ela precisava,
+// 6. A publicacao da projecao NAO readquire o lock. Sob a 4.2 ela precisava,
 //    so para o rename final, porque escrever f.yaml com o lock alheio forjaria
-//    um segundo mutex. Esse era o custo que a 2.3 existe para eliminar.
+//    um segundo mutex. Esse era o custo que a 4.3 existe para eliminar.
 eval("sed -n '/function publishYaml/,/^  }/p' src/io-engine.js", (out) => {
   check(!out.includes("acquireLock"))
   check(out.includes("publishDerived"))
 })
 
 // 7. O timeout voltou a ser CONSTANTE, e a constante e justificada pela medicao
-//    de 2.1/2.2 (secao critica O(1)), nao escolhida a dedo. Um timeout que
+//    de 4.1/4.2 (secao critica O(1)), nao escolhida a dedo. Um timeout que
 //    cresce com o dado transforma deadlock real em travamento longo.
-eval("grep -n 'export const LOCK_TIMEOUT' src/adapters/io-append.js", (out) => check(out.includes("1000")))
+// (o timeout e constante por decisao; o valor foi de 1000 para 3000 depois da confirmacao)
+eval("grep -n 'export const LOCK_TIMEOUT' src/adapters/io-append.js", (out) => check(out.includes("3000")))
 
 // 8. Nenhum .tmp de nome fixo sobrou. Um .tmp compartilhado por todo processo
 //    que escreve a mesma base e o bug da 1.2 voltando por outra porta.
@@ -79,7 +80,7 @@ eval("grep -n \"yaml + '.tmp'\" src/io-engine.js", (out) => check(out.trim(), ""
 //    qualquer arquivo remanescente no fim e um release que nao aconteceu. Sob
 //    a polaridade antiga isso era invisivel, porque o estado livre TAMBEM era
 //    um arquivo.
-eval("node plans/2-pages/2.3.probe.js 8 30", (out) => {
+eval("node plans/4-concorrencia/4.3.probe.js 8 30", (out) => {
   const n = (k) => { const m = out.match(new RegExp(k + "=([0-9]+)")); return m ? Number(m[1]) : NaN }
   check(n("crashed"), 0)
   check(n("timeouts"), 0)

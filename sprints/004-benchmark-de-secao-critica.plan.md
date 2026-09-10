@@ -1,6 +1,6 @@
 # 004 — Plano: benchmark de secao critica
 
-Sprint da feature **2.1** (frente 2 `pages`). Primeira da frente por necessidade: sem
+Sprint da feature **4.1** (frente 2 `pages`). Primeira da frente por necessidade: sem
 medicao, nenhuma das outras quatro e avaliavel.
 
 ## Objetivo
@@ -31,7 +31,7 @@ Foi assim que "4 -> 10 falhas" virou argumento contra o `Atomics.wait` no coment
    Guarda por env var/opcao, **custo zero quando desligado** — isto fica no caminho quente.
 
 2. **Metrica principal:** tempo entre `acquireLock` retornar e o `rename` de release. E o
-   numero que 2.2 precisa derrubar.
+   numero que 4.2 precisa derrubar.
 
 3. **`io-engine.bench.js`**: grade de 6 pontos — 1k/10k/100k registros x 1 e 8 processos.
    Reusa o padrao multi-processo ja estabelecido em `io-engine.matrix.test.js:52-112`
@@ -48,7 +48,7 @@ Foi assim que "4 -> 10 falhas" virou argumento contra o `Atomics.wait` no coment
 - Baseline p50/p95/p99 por fase, nos 6 pontos da grade, commitado.
 - Instrumentacao desligada nao altera o resultado do engine (suite verde com `--force`).
 - O bench mostra o O(n) esperado: p95 do tempo-com-lock **cresce** com o tamanho do store
-  (e o que 2.2 vai eliminar — este sprint so precisa tornar isso visivel).
+  (e o que 4.2 vai eliminar — este sprint so precisa tornar isso visivel).
 
 ## Verify
 

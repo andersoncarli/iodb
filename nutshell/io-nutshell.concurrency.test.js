@@ -22,7 +22,7 @@
 // chains from the prevKey it believes is last, and computes shortestPrefix
 // against a prefixSet blind to the other writers' keys. Hence the collisions.
 //
-// Coordinated mode ({ lock: true }) is feature 2.2's delivery, which extracts
+// Coordinated mode ({ lock: true }) is feature 4.2's delivery, which extracts
 // the critical section as a shared io-append.js module. When that lands, this
 // test keeps describing the DEFAULT (unlocked) behaviour, which stays true.
 //

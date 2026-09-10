@@ -34,7 +34,7 @@ suposto):
   todas as anteriores. Sem offset multiplo de 4096 nao ha `writeSync` posicionado,
   e sem isso nao ha "escrita O(paginas sujas)";
 - **e assincrono** — o `io-engine` escreve com `appendFileSync`/`writeFileSync`
-  dentro da secao critica do lock (feature 2.2/2.3). `await` ali dentro nao e
+  dentro da secao critica do lock (feature 4.2/4.3). `await` ali dentro nao e
   detalhe, e reabertura da secao critica. O nucleo paginado precisa de um caminho
   sincrono.
 
@@ -186,14 +186,14 @@ Os docs descrevem bem mais do que 2.5 pede. Nao entra neste sprint:
   preservada em append;
 - **o padding sobrevive a um editor que remove trailing spaces** (doc 05);
 - **pagina cheia cristaliza** e a posicao resolve a identidade (doc 03);
-- suite verde, sem regressao no bench de escrita (2.1).
+- suite verde, sem regressao no bench de escrita (4.1).
 
 ## Regras dos benchmarks (restricao do usuario)
 
 - **localizados**: cada bench mede UMA operacao (open, get-miss, escrita, range),
   nao um cenario inteiro;
 - **time-bounded**: orcamento de tempo explicito por caso, aborta ao estourar;
-- **no maximo 3 workers concorrentes** — igual aos benches de 2.1 / 3.3.
+- **no maximo 3 workers concorrentes** — igual aos benches de 4.1 / 3.3.
 
 ## Resultado (2026-09-10) — 🟢 avaliada, 16/16 passos do eval verdes
 
@@ -209,7 +209,7 @@ Os docs descrevem bem mais do que 2.5 pede. Nao entra neste sprint:
   `materialize()` para snapshot JSON. Cache LRU de 64 paginas (~256KB teto).
 - **`src/io-engine.js`**: parametro `pageSize: N` (0 ou ausente = plain, byte-identico). `f.proj` e artefato
   derivado (como `.yaml`): escrito no yield periodico e em `close()`, NUNCA por
-  append — senao o rewrite O(store) volta pra hot path que a 2.2 esvaziou.
+  append — senao o rewrite O(store) volta pra hot path que a 4.2 esvaziou.
   Bug pre-existente corrigido: `_projCopy()` / `materialize()` cobrem array e
   objeto.
 - **Testes** (novos, na convencao da suite): `pagedtext/pagedtext.t.js` (45),

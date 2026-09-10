@@ -56,7 +56,7 @@ cima dele.
    working tree da sessao de 2026-09-10 — `check(bad <= Math.ceil(ran/2))` caiu.)*
 
 4. **Limpar o residuo da "1.4 genesis atomico"** em `io-engine.matrix.test.js`.
-   Aquela feature nunca existiu e o trabalho saiu na 2.3. *(Ja feito no mesmo
+   Aquela feature nunca existiu e o trabalho saiu na 4.3. *(Ja feito no mesmo
    working tree.)*
 
 5. **`plans/1-core/1.4.eval.js`.**

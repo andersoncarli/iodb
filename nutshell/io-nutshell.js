@@ -110,7 +110,7 @@ export function IO(name, opts = {}) {
   // The mutex is created once, at construction — never inside flush(). A
   // process that finds it missing mid-flush would be looking at a lock someone
   // else is HOLDING (acquire renames it away), and recreating it would let two
-  // writers in at once. That is the same coupling feature 2.3 removes from
+  // writers in at once. That is the same coupling feature 4.3 removes from
   // io-engine, where the projection doubles as the lock.
   if (lock) {
     try { if (!existsSync(path)) mkdirSync(path, { recursive: true }) } catch { }
@@ -212,7 +212,7 @@ export function IO(name, opts = {}) {
     }
 
     // Projection is DERIVED — recomputable from the log — so it is published
-    // outside the critical section. That is the whole point of feature 2.2.
+    // outside the critical section. That is the whole point of feature 4.2.
     writeFileSync(projFile, projTo(state) + '\n')
     buffer = []
     for (const { key, payload } of flushed)

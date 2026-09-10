@@ -1,12 +1,12 @@
 ---
 sprint: 8
 date: 2026-09-09
-features: [2.3]
+features: [4.3]
 thread: null
 ---
 # 008 — Report: lockfile-dedicado-absorve-genesis-atomico
 
-Feature 2.3. O mutex saiu de dentro do dado e ganhou arquivo proprio — e, no
+Feature 4.3. O mutex saiu de dentro do dado e ganhou arquivo proprio — e, no
 meio do sprint, ganhou tambem a polaridade certa.
 
 ## O que mudou
@@ -40,7 +40,7 @@ inversao vale mais que a separacao sozinha:
 
 **Consequencias em cascata**, todas subtracao de codigo:
 
-- `publishYaml()` nao readquire mais o lock. Sob a 2.2 ela precisava, so para o
+- `publishYaml()` nao readquire mais o lock. Sob a 4.2 ela precisava, so para o
   rename final, porque escrever `f.yaml` com o lock alheio forjaria um segundo
   mutex. A projecao virou artefato derivado comum, publicada por
   `publishDerived` e arbitrada por offset, igual ao `.index`.
@@ -51,7 +51,7 @@ inversao vale mais que a separacao sozinha:
   dado e o do controle eram o mesmo evento e tinham que ser disputados juntos;
   agora o genesis e so a primeira escrita, sob o lock comum.
 - **`lockTimeout` voltou a ser constante** (`LOCK_TIMEOUT = 1000`), justificada
-  pela medicao de 2.1/2.2: com a secao critica O(1), um timeout que cresce com o
+  pela medicao de 4.1/4.2: com a secao critica O(1), um timeout que cresce com o
   dado nao compensa nada e transforma deadlock real em travamento longo.
 - **Os `.tmp` de nome fixo restantes** receberam sufixo de PID.
 - A engine passou a **consumir o protocolo de io-append.js** em vez de manter
@@ -59,7 +59,7 @@ inversao vale mais que a separacao sozinha:
 
 ## Medicao
 
-Sonda `plans/2-pages/2.3.probe.js`, 8 processos x 30 escritas, mesmo cenario:
+Sonda `plans/2-pages/4.3.probe.js`, 8 processos x 30 escritas, mesmo cenario:
 
 | | f.yaml era o mutex | f.lock, ausencia = livre |
 |---|---|---|
@@ -105,7 +105,7 @@ dados mascarava**. Trocar 204 registros silenciosamente perdidos por 240
 registros com colisao de prefixo detectavel e progresso, mas nao fecha o
 criterio.
 
-`sprint files --drift hash.js` responde **FORA** do escopo de 2.3. Conforme a
+`sprint files --drift hash.js` responde **FORA** do escopo de 4.3. Conforme a
 regra do projeto, esta reportado e nao consertado: pede sprint proprio.
 
 ## Arquivos
@@ -114,11 +114,11 @@ regra do projeto, esta reportado e nao consertado: pede sprint proprio.
   constante, `ensureLock` vira no-op, `releaseLock` por unlink.
 - `io-engine.js` — `f.lock` na familia, adota io-append.js, `open()` sem danca
   de recuperacao nem eleicao de genesis, `publishYaml` sem lock, `.tmp` por PID.
-- `plans/2-pages/2.3.probe.js` — a sonda ao vivo.
-- `plans/2-pages/2.3.eval.js` — o roteiro de avaliacao.
+- `plans/2-pages/4.3.probe.js` — a sonda ao vivo.
+- `plans/2-pages/4.3.eval.js` — o roteiro de avaliacao.
 
 ## Proximo
 
 Sprint proprio para a alocacao de prefixo curto multi-processo (`hash.js`,
-`shortestPrefix`). Sem ele o criterio `bad = 0` da 2.3 nao tem como fechar,
+`shortestPrefix`). Sem ele o criterio `bad = 0` da 4.3 nao tem como fechar,
 porque a falha que resta nao pertence ao lock.

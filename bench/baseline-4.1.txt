@@ -1,4 +1,4 @@
-# Baseline — feature 2.1 (benchmark de seção crítica)
+# Baseline — feature 4.1 (benchmark de seção crítica)
 #
 # commit:  14ca938f2e6fcc718bcfcf2c9498873422604d06 (antes desta feature — HEAD do momento do run)
 # data:    2026-09-07
@@ -8,10 +8,10 @@
 # Leitura: "critical" é a métrica de aceitação do front inteiro — tempo com o
 # lock retido, de acquireLock() ao rename de release em flush(). Cresce de
 # p99=17ms (1k registros) para p99=733ms (100k) porque saveIndex()/flushYaml()
-# reescrevem .index/.yaml INTEIROS dentro do lock a cada flush — o alvo da 2.2
+# reescrevem .index/.yaml INTEIROS dentro do lock a cada flush — o alvo da 4.2
 # é achatar essa curva (p95 em 100k próximo do p95 em 1k). Em 100k×8 procs,
 # 7/8 workers bateram o lockTimeout de 1000ms — o sintoma de contenção que
-# 2.2/2.3 existem para eliminar.
+# 4.2/4.3 existem para eliminar.
 
 io-engine.bench.js — grid: sizes=1000,10000,100000 concurrencies=1,8 writes/cell=200
 

@@ -1,6 +1,6 @@
 # 008 — Plano: lockfile-dedicado-absorve-genesis-atomico
 
-Sprint 008, feature 2.3 — Lockfile dedicado: desacoplar mutex de dado.
+Sprint 008, feature 4.3 — Lockfile dedicado: desacoplar mutex de dado.
 
 ## Objetivo
 
@@ -15,14 +15,14 @@ projeção **não existe**. Toda a complexidade residual da engine sai dessa jan
 - o genesis usa `openSync(f.yaml,'wx')` como mutex-de-uma-vez (io-engine.js:411),
   misturando o nascimento do dado com o nascimento do controle;
 - `lockTimeout` (io-engine.js:48) cresce com o tamanho de `f.yaml` — compensação para
-  um trabalho O(n) que a 2.2 já tirou de dentro da seção crítica.
+  um trabalho O(n) que a 4.2 já tirou de dentro da seção crítica.
 
 Este sprint dá ao mutex **arquivo próprio de 0 bytes** (`f.lock`), criado exatamente
 uma vez, e rebaixa `f.yaml` a artefato derivado como o `.index`.
 
 ## Decisão de escopo registrada
 
-O requisito da 2.3 manda "decidir se absorve a 1.4 (genesis atômico + .tmp por PID)".
+O requisito da 4.3 manda "decidir se absorve a 1.4 (genesis atômico + .tmp por PID)".
 **A 1.4 não existe como feature** — `sprint fronts 1` lista só 1.1, 1.2 e 1.3, todas
 🔵. A referência é resíduo de um plano antigo. Logo não há absorção a negociar: o
 genesis atômico entra aqui como parte natural do desenho, porque é o mesmo arquivo.
@@ -46,12 +46,12 @@ genesis atômico entra aqui como parte natural do desenho, porque é o mesmo arq
    de io-append.js, arbitrada por offset como o `.index` já é. Some a reaquisição.
 
 5. **io-engine.js — `lockTimeout` constante.** Volta a 1000ms fixo, **justificado**
-   pelo p99 medido em 2.1/2.2 (seção crítica O(1)), não escolhido a dedo.
+   pelo p99 medido em 4.1/4.2 (seção crítica O(1)), não escolhido a dedo.
 
 6. **io-engine.js — `.tmp` por PID.** Os fixos restantes (`f.yaml + '.tmp'` em
    `writeGenesis` e `flushYaml`) recebem sufixo de PID.
 
-7. **plans/2-pages/2.3.eval.js** — o roteiro de avaliação executável.
+7. **plans/2-pages/4.3.eval.js** — o roteiro de avaliação executável.
 
 ## Critério de pronto
 
@@ -59,7 +59,7 @@ O critério declarado na feature: **distribuição de `bad` em N>=20 rodadas da 
 no-seed = 0**. Em `io-engine.matrix.test.js:169` o `check(bad <= TRIALS/4)` vira
 `check(bad, 0)`.
 
-Verify: `node --test io-engine.matrix.test.js` e `sprint eval 2.3 --yes`.
+Verify: `node --test io-engine.matrix.test.js` e `sprint eval 4.3 --yes`.
 
 ## Emenda no meio do sprint — polaridade (pedido do usuario)
 

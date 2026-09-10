@@ -24,7 +24,7 @@ import { PagedProjection, materialize } from './paged-projection.js'
  *   dash (default):  {payload}#key
  *   jsonl:           {"key":payload}
  *
- * Lock protocol (dedicated lockfile, feature 2.3 — see io-append.js):
+ * Lock protocol (dedicated lockfile, feature 4.3 — see io-append.js):
  *   the mutex is f.lock, and ABSENCE means free:
  *     free    → no f.lock.* exists
  *     locked  → f.lock.<PID> exists (created with 'wx', atomic)
@@ -47,7 +47,7 @@ import { PagedProjection, materialize } from './paged-projection.js'
 // work under the lock grew: `flush` rewrote the whole projection inside the critical
 // section, so a bigger store genuinely needed longer before declaring a deadlock.
 //
-// Feature 2.2 moved that O(n) work out, and 2.1 measured what was left. With the
+// Feature 4.2 moved that O(n) work out, and 4.1 measured what was left. With the
 // critical section down to *stat, append, release*, a timeout that scales with the
 // store compensates for nothing — so it is a flat constant again (LOCK_TIMEOUT), and
 // the constant is justified by the measurement rather than picked by hand.
@@ -89,7 +89,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
                        : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.yaml',
     index: logOverride ? logOverride.replace(/\.dash$/, '.index')
                        : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.index',
-    // The mutex, feature 2.3. Zero bytes, forever — it carries no data at all,
+    // The mutex, feature 4.3. Zero bytes, forever — it carries no data at all,
     // which is the entire point: nothing reads it, so nothing depends on it
     // being present, so it is free to spend its life renamed away to
     // `.lock.<pid>` while a writer holds it.
@@ -206,7 +206,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
 
   function saveIndex() {
     if (!f.index) return
-    // ORDER ARBITER (feature 2.2, tightened by 1.5). Publication happens outside
+    // ORDER ARBITER (feature 4.2, tightened by 1.5). Publication happens outside
     // the .dash lock, so two writers reach this point out of order and a slow one
     // can land after a fast one — an older index overwriting a newer.
     //
@@ -371,9 +371,9 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     genesisWritten = true
   }
 
-  // Publish the YAML projection. No lock — this is feature 2.3's payoff.
+  // Publish the YAML projection. No lock — this is feature 4.3's payoff.
   //
-  // Under 2.2 this function had to REACQUIRE the lock just to do its final
+  // Under 4.2 this function had to REACQUIRE the lock just to do its final
   // rename, because f.yaml was simultaneously the projection and the mutex:
   // writing it while another process held the lock would forge a second mutex
   // and put two writers in the critical section at once. (Measured on the
@@ -494,7 +494,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // and does NOT touch disk here. The .proj file is a derived artifact like
       // .yaml: it is written on the periodic yield and on close(), not on every
       // append. Flushing it per-append would put an O(store) rewrite back on the
-      // hot path, which is exactly what feature 2.2 removed.
+      // hot path, which is exactly what feature 4.2 removed.
       if (paged) {
         for (const { short, payload } of provisional) _reduce(projection, { [short.p]: payload })
       } else {
@@ -515,13 +515,13 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       idx.syncedAt = nano()
       _log = []
 
-      // ── Release the lock NOW (feature 2.2) ───────────────────────────────
+      // ── Release the lock NOW (feature 4.2) ───────────────────────────────
       // The indivisible work is done: we checked the log had not grown, and we
       // appended. Everything below this line publishes DERIVED state — the
       // index and the YAML projection are both reconstructible from the .dash —
       // so holding the lock across it buys nothing and costs everything.
       //
-      // That cost was measured (baseline 2.1): the critical section went from
+      // That cost was measured (baseline 4.1): the critical section went from
       // p99=17ms at 1k records to 733ms at 100k, and in 100k×8 seven of eight
       // workers hit the lock timeout. `stringify` of a 100k projection alone is
       // ~790ms, and it ran with the lock held.

@@ -63,7 +63,7 @@ de CPU, o que e informacao util para quem for mexer na secao critica.
 ## O que este sprint NAO decide
 
 O conflito de fundo fica aberto, deliberadamente. O nutshell declara "No locks. No
-WAL. No fsync." enquanto a frente 2 (2.2–2.5) endurece exatamente a concorrencia
+WAL. No fsync." enquanto a frente 2 (4.2–2.5) endurece exatamente a concorrencia
 multi-processo que a 1.2 provou corromper o indice. As duas linhas puxam em direcoes
 opostas.
 

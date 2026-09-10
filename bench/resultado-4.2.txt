@@ -1,4 +1,4 @@
-# Resultado — feature 2.2 (secao critica minima)
+# Resultado — feature 4.2 (secao critica minima)
 #
 # commit:  (staged, sprint 007)
 # data:    2026-09-08
@@ -8,13 +8,13 @@
 # O QUE MUDOU: saveIndex() e a publicacao da projecao sairam de dentro do lock.
 # A secao critica agora e so: conferir que o log nao cresceu, apender, soltar.
 #
-# 1 PROCESSO — o criterio da 2.2, atingido:
+# 1 PROCESSO — o criterio da 4.2, atingido:
 #   critical p99 = 1ms em 1k, 10k E 20k. A curva ficou PLANA no tamanho do
-#   store. Baseline 2.1 tinha p99=17ms (1k) e 96ms (10k).
+#   store. Baseline 4.1 tinha p99=17ms (1k) e 96ms (10k).
 #
 # 8 PROCESSOS — melhorou pela metade, nao resolveu:
 #   10k x 8: critical p99 30ms -> 15ms, p95 14ms -> 10ms.
-#   Sob contencao o gargalo passa a ser lockWait, nao a secao critica. E a 2.3
+#   Sob contencao o gargalo passa a ser lockWait, nao a secao critica. E a 4.3
 #   (lockfile dedicado) que ataca isso — enquanto f.yaml for projecao E mutex,
 #   publicar a projecao precisa readquirir o lock.
 #

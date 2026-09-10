@@ -134,7 +134,7 @@ export function shortestPrefix(fullKey, bitsSet, minBits = 1) {
       // toBits() strips the sentinel back off.
       const v = parseInt('1' + p, 2)
       // `key` is an alias of `p`: io-engine reads `.p`, the nutshell reads
-      // `.key`. Both names ship so one module serves both callers (feature 2.2).
+      // `.key`. Both names ship so one module serves both callers (feature 4.2).
       const key = toB64(v)
       return { p: key, key, n, bits: p }
     }
@@ -148,7 +148,7 @@ export function shortestPrefix(fullKey, bitsSet, minBits = 1) {
  * Records #0 and #1 are reserved headers — skip crypto check.
  * All other records: stored key must be a binary prefix of the recomputed full key.
  *
- * Accepts either record shape (feature 2.2 — one function, both callers):
+ * Accepts either record shape (feature 4.2 — one function, both callers):
  *   { [key]: payload }    io-engine's line format
  *   { key, payload }      the nutshell's parseLine output
  * The chain maths is identical; only the envelope differs.

@@ -1,4 +1,4 @@
-// Sonda do eval 2.3 — mede o que o LOCKFILE DEDICADO responde por, e nada mais.
+// Sonda do eval 4.3 — mede o que o LOCKFILE DEDICADO responde por, e nada mais.
 //
 // O que esta feature possui: exclusao mutua, ausencia de perda, ausencia de
 // crash, e a INVARIANTE NOVA — f.yaml existe o tempo todo. Sob o protocolo

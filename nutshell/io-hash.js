@@ -1,7 +1,7 @@
 /**
  * io-hash.js — the nutshell's view of the hash primitive.
  *
- * This file used to carry its own copy of the maths. Feature 2.2 proved the two
+ * This file used to carry its own copy of the maths. Feature 4.2 proved the two
  * copies were identical — canonical, sha64, toB64, fromB64, toBits and
  * makeFullKey agreed on every payload tested and across the full 64-bit range —
  * so the copy is gone and this is now a re-export of the root module.

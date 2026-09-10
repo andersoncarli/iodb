@@ -3,7 +3,7 @@
 Plano do sprint 011 (feature 3.3).
 
 Objetivo, pedido original e o contrato que nao muda: `sprint fronts 3.3`.
-Em uma linha: portar a polaridade da 2.3 para o nutshell, mantendo o lock
+Em uma linha: portar a polaridade da 4.3 para o nutshell, mantendo o lock
 opt-in, e medir as duas engines sob a mesma carga.
 
 ## Passos

@@ -1,6 +1,6 @@
 # O write lock do iodb
 
-> Estado: vigente desde o sprint 008 (feature 2.3, 🔵 confirmada em 2026-09-09).
+> Estado: vigente desde o sprint 008 (feature 4.3, 🔵 confirmada em 2026-09-09).
 > Implementacao: `io-append.js`. Consumidores: `io-engine.js`, `nutshell/io-nutshell.js`.
 
 Este documento explica **por que** o lock e assim, nao so como ele funciona. As
@@ -79,7 +79,7 @@ disputar o `wx`, onde o kernel escolhe exatamente um vencedor.
 projecao, e isso era uma compensacao, nao uma politica: o trabalho sob o lock
 crescia junto, porque a projecao inteira era reescrita dentro da secao critica.
 
-A feature 2.2 tirou o trabalho O(n) de dentro do lock e a 2.1 mediu o que sobrou —
+A feature 4.2 tirou o trabalho O(n) de dentro do lock e a 4.1 mediu o que sobrou —
 *stat, append, release*, plano no tamanho do store. Um timeout que cresce nao
 compensa mais nada, e um timeout que cresce e pior que um fixo: transforma um
 deadlock real numa espera longa proporcional aos seus dados.
@@ -177,5 +177,5 @@ antes que o codigo assentasse.
   `appendGuarded`, `publishDerived`)
 - consumidor indexado, projecao YAML: `io-engine.js`
 - consumidor minimo, lock desligado por padrao: `nutshell/io-nutshell.js`
-- roteiro de avaliacao executavel: `plans/2-pages/2.3.eval.js`
-- sonda de medicao ao vivo: `plans/2-pages/2.3.probe.js`
+- roteiro de avaliacao executavel: `plans/4-concorrencia/4.3.eval.js`
+- sonda de medicao ao vivo: `plans/4-concorrencia/4.3.probe.js`

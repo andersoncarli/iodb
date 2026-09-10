@@ -1,7 +1,7 @@
 ---
 sprint: 7
 date: 2026-09-08
-features: [2.2]
+features: [4.2]
 thread: null
 ---
 # 007 — secao-critica-modular-io-append
@@ -10,9 +10,9 @@ Extrai a secao critica como modulo (`io-append.js`) e unifica o hash duplicado. 
 segundo consumidor (nutshell com `{ lock: true }`) foi implementado mas **nao fecha** —
 esbarra na eleicao de genesis nao-atomica, a mesma divida que a 1.4 documenta.
 
-## Estado: PARCIAL — sprint encenado sem a feature 2.2 fechar
+## Estado: PARCIAL — sprint encenado sem a feature 4.2 fechar
 
-Este report registra trabalho entregue e trabalho que nao fechou. A 2.2 permanece ⚫:
+Este report registra trabalho entregue e trabalho que nao fechou. A 4.2 permanece ⚫:
 o corte principal (tirar `saveIndex`/`flushYaml` de dentro do lock em `io-engine.js`)
 **nao foi feito** — o sprint parou antes, no segundo consumidor.
 
@@ -101,7 +101,7 @@ Mesmo com exclusao correta e lock pre-criado, o cenario 8x30 do nutshell segue e
 esta no **uso** que o nutshell faz dele — provavelmente no `onResync`/`chain`, nao no
 lock. Nao ha diagnostico fechado; nao insistir por hipotese.
 
-## O CORTE PRINCIPAL DA 2.2 — feito e medido
+## O CORTE PRINCIPAL DA 4.2 — feito e medido
 
 `saveIndex()` e a publicacao da projecao sairam de dentro do lock. A secao critica
 agora e so o trabalho indivisivel: conferir que o log nao cresceu, apender, soltar.
@@ -117,7 +117,7 @@ agora e so o trabalho indivisivel: conferir que o log nao cresceu, apender, solt
 p95: de 21/96/25 ms para **2/1/1 ms**.
 
 O que importa nao e so a queda: e que a curva ficou **plana**. A secao critica deixou
-de crescer com o tamanho do store, que e literalmente o criterio de aceitacao da 2.2.
+de crescer com o tamanho do store, que e literalmente o criterio de aceitacao da 4.2.
 No bench por fases, `publish` caiu para 0.00 ms em todos os percentis.
 
 ### Como foi feito
@@ -130,7 +130,7 @@ No bench por fases, `publish` caiu para 0.00 ms em todos os percentis.
 - **`publishYaml()`** faz o `stringify` (o O(n)) fora do lock e readquire o lock apenas
   para o rename. Nao da para simplesmente escrever `f.yaml` sem lock: ele e projecao E
   mutex ao mesmo tempo, e escreve-lo durante um hold forjaria um segundo mutex — o mesmo
-  mecanismo medido acima (8 de 120 secoes sobrepostas). **A 2.3 elimina essa danca**: com
+  mecanismo medido acima (8 de 120 secoes sobrepostas). **A 4.3 elimina essa danca**: com
   mutex em arquivo proprio, a projecao vira artefato derivado como qualquer outro.
 
 ### Multi-processo — bench refatorado, numero obtido
@@ -148,14 +148,14 @@ Refatorado:
 
 Resultado em `bench/resultado-2.2.txt`. Comparacao direta com o baseline em 10k x 8:
 
-| 10k x 8 procs | baseline 2.1 | depois da 2.2 |
+| 10k x 8 procs | baseline 4.1 | depois da 4.2 |
 |---|---|---|
 | critical p95 | 14 ms | **10 ms** |
 | critical p99 | 30 ms | **15 ms** |
 
 Metade — melhorou, mas **nao resolveu**. Sob contencao o gargalo deixa de ser a secao
 critica e passa a ser o `lockWait` (p99 618ms no baseline). Em 20k x 8, 3 de 8 workers
-ainda batem o lock timeout. Isso e trabalho da **2.3**: enquanto `f.yaml` for projecao E
+ainda batem o lock timeout. Isso e trabalho da **4.3**: enquanto `f.yaml` for projecao E
 mutex ao mesmo tempo, publicar a projecao exige readquirir o lock.
 
 ### Onde foi parar o O(n)
@@ -170,7 +170,7 @@ Medido por fase, 1 processo:
 
 O custo O(n) **migrou para fora do lock**, que era exatamente o objetivo. O que resta
 crescendo e o `precompute`, e a causa ja esta identificada e registrada: `shortestPrefix`
-e O(n) no `prefixSet` (achado da 2.1, alvo da 2.4).
+e O(n) no `prefixSet` (achado da 4.1, alvo da 2.4).
 
 ## Estado dos testes
 
@@ -192,7 +192,7 @@ do corte. A celula `no-seed` da matriz, que a 1.3 documentava como instavel, rod
 
 ## Proximo passo
 
-A 2.2 continua ⚫ e seu corte principal esta intacto para ser feito. A decisao do
+A 4.2 continua ⚫ e seu corte principal esta intacto para ser feito. A decisao do
 usuario apos este sprint foi reabrir a questao mais acima: repensar o formato da
 projecao e separar **lock de paginas** de **projecao atomica** — o que muda o que 2.4
 e 2.5 devem ser.

@@ -1,6 +1,6 @@
 # 012 — Plano: reorganizar-arvore-src-adapters
 
-Plano do sprint 012 (feature 4.1).
+Plano do sprint 012 (feature 5.1).
 
 ## Objetivo
 
@@ -12,7 +12,7 @@ substituir a ordem-por-nome-de-arquivo por um carregamento explicito via
 ## Passos concretos
 
 1. `git mv` de cada adapter para o nome sem prefixo (ver tabela completa em
-   `plans/4-core/4.1-reorganizar-arvore-src-adapters.md`, secao "Rodada 2").
+   `plans/4-core/5.1-reorganizar-arvore-src-adapters.md`, secao "Rodada 2").
    Excecao: `60-node.js` -> `node-adapter.js` (nao `node.js`, que ja existe
    como nucleo em `src/node.js`).
 2. Criar `src/adapters/index.js`: import explicito de cada adapter na ordem
@@ -33,7 +33,7 @@ substituir a ordem-por-nome-de-arquivo por um carregamento explicito via
 6. `bun ../utest/utest.js .` — conferir que nao ha regressao nova (as 7
    falhas de `io-engine.matrix.test.js`/`.concurrency.test.js` sao
    pre-existentes, do 1.4, fora de escopo).
-7. `sprint update 4.1` para trocar os nomes antigos com prefixo na lista
+7. `sprint update 5.1` para trocar os nomes antigos com prefixo na lista
    `files:` pelos nomes novos + `index.js`.
 8. `sprint files --drift` sobre os arquivos tocados e `sprint docs`.
 
@@ -43,6 +43,6 @@ substituir a ordem-por-nome-de-arquivo por um carregamento explicito via
 - `src/adapters/index.js` existe e e a unica fonte de ordem/registro dos
   adapters (nada mais faz `readdirSync` sobre a pasta por convencao de nome).
 - Suite de testes sem regressao nova.
-- `sprint files --drift` limpo (tudo dentro do escopo da 4.1) e
+- `sprint files --drift` limpo (tudo dentro do escopo da 5.1) e
   `sprint docs` com `docs:check — ok`.
 - `.report.md` e `sprint close` ficam com o usuario.

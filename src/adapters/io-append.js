@@ -1,7 +1,7 @@
 /**
  * io-append.js — the indivisible part of a write, on its own.
  *
- * Feature 2.2 asked what is genuinely atomic in `flush()`. The answer is small:
+ * Feature 4.2 asked what is genuinely atomic in `flush()`. The answer is small:
  * *check whether the log grew, append, release*. Everything else the engine used
  * to do under the lock — saveIndex(), flushYaml() — publishes DERIVED state that
  * is reconstructible from the log, so it does not belong in the critical section.
@@ -12,7 +12,7 @@
  * engines share it: io-engine.js (indexed, YAML projection, dash/jsonl) and
  * nutshell/io-nutshell.js (no index, JSON projection, jsonl only).
  *
- * Lock protocol (presence-based, feature 2.3; per-file since 1.5):
+ * Lock protocol (presence-based, feature 4.3; per-file since 1.5):
  *   free    → no <base>.<pid>.lock.<file> exists at all
  *   locked  → <base>.<pid>.lock.<file> exists
  *   acquire → scan for live holders, create ours, RECHECK, lowest pid wins
@@ -49,19 +49,19 @@ import { statSync, renameSync, appendFileSync, readFileSync, writeFileSync, unli
 import { dirname, basename, join } from 'path'
 
 /**
- * The lock timeout is a flat constant, and feature 2.3 is what earned it back.
+ * The lock timeout is a flat constant, and feature 4.3 is what earned it back.
  *
  * It used to scale with the size of the projection file, because the work under
  * the lock scaled with it too: the whole projection was rewritten inside the
  * critical section, so a bigger store really did need longer before a wait could
  * honestly be called a deadlock. That is a compensation, not a policy.
  *
- * 2.2 took the O(n) work out of the critical section and 2.1 measured what was
+ * 4.2 took the O(n) work out of the critical section and 4.1 measured what was
  * left — *stat, append, release*, flat in store size. A timeout that grows now
  * compensates for nothing, and a growing timeout is worse than a fixed one: it
  * turns a real deadlock into a long hang that scales with your data.
  *
- * The value still does NOT scale with data — that part of the 2.3 argument
+ * The value still does NOT scale with data — that part of the 4.3 argument
  * stands. What feature 1.5 changed is that the mutex now actually excludes
  * (acquireLock had built a per-PID path, so every writer used to "win"
  * instantly). With real mutual exclusion, N contending writers genuinely queue,

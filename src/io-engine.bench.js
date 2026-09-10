@@ -1,11 +1,11 @@
-// io-engine.bench.js — feature 2.1
+// io-engine.bench.js — feature 4.1
 //
 // Makes "sub-millisecond critical section" a checkable claim instead of one
 // inferred from test-failure counts (which turned out to be noise — see
-// plans/2-pages/2.1-benchmark-de-secao-critica.md for why).
+// plans/2-pages/4.1-benchmark-de-secao-critica.md for why).
 //
 // Metric that matters: TIME WITH THE LOCK HELD — from acquireLock() returning
-// to the release rename in flush(). That's the number 2.2 must shrink, and
+// to the release rename in flush(). That's the number 4.2 must shrink, and
 // the one that must stop growing with store size once it does.
 //
 // Grid: store size (1k / 10k / 100k records already on disk) × concurrency
@@ -170,7 +170,7 @@ async function runMultiProcess(dir, seedCount, procs, writesPerProc) {
   })))
   // A worker hitting `[IO] Lock timeout` under 8-way contention at larger store
   // sizes is not a bench bug — it's the exact O(n)-critical-section symptom
-  // this feature exists to measure (see plans/2-pages/2.1). Record it as data
+  // this feature exists to measure (see plans/2-pages/4.1). Record it as data
   // (`timedOut`) instead of throwing, so the grid finishes and the number
   // makes it into the baseline.
   const timedOut = results.filter(r => r.code !== 0 && /Lock timeout/.test(r.err)).length
@@ -233,7 +233,7 @@ async function runGrid(sizes, concurrencies, writesPerCell) {
       console.log('    Celulas multi-processo nao cabem no orcamento por um limite do ENGINE,')
       console.log('    nao do bench: sob contencao os workers esperam no lock, cujo timeout')
       console.log('    minimo e 1000ms (io-append.js lockTimeout). Fencear o laco de escrita')
-      console.log('    nao ajuda — o tempo e gasto ESPERANDO, nao escrevendo. E a feature 2.3')
+      console.log('    nao ajuda — o tempo e gasto ESPERANDO, nao escrevendo. E a feature 4.3')
       console.log('    (lockfile dedicado) que ataca isso; ate la, o estouro e o proprio dado.')
     }
   }
@@ -246,8 +246,8 @@ async function runGrid(sizes, concurrencies, writesPerCell) {
 const isMain = import.meta.main
 if (isMain && !process.argv.includes('--paged')) {
   // Default grid is chosen to FIT the per-cell budget, not to be impressive.
-  // 100k stayed in the 2.1 baseline because that baseline was the point — the
-  // 733ms critical section it recorded is exactly what 2.2 set out to kill. But
+  // 100k stayed in the 4.1 baseline because that baseline was the point — the
+  // 733ms critical section it recorded is exactly what 4.2 set out to kill. But
   // a cell that takes a minute cannot be run routinely, so 100k is now opt-in
   // via --full: the default grid has to stay cheap enough to actually run.
   const quick = process.argv.includes('--quick')
@@ -273,7 +273,7 @@ if (isMain && !process.argv.includes('--paged')) {
 // ── Sanity test: instrumentation must not change engine behaviour ──────────
 // Runs under utest (bun ../utest/utest.js io-engine.bench.js --force).
 if (globalThis.test) {
-  test('2.1 bench — phase marks sum to <= wall time, instrumentation is inert', async ({ check }) => {
+  test('4.1 bench — phase marks sum to <= wall time, instrumentation is inert', async ({ check }) => {
     const dir = mkdtempSync(join(tmpdir(), 'iodb-bench-test-'))
     try {
       const base = join(dir, 'LOG')

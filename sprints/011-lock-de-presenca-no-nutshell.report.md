@@ -6,7 +6,7 @@ thread: null
 ---
 # 011 — lock-de-presenca-no-nutshell
 
-Intro: o lock de presenca (feature 2.3) agora e opt-in no nutshell via
+Intro: o lock de presenca (feature 4.3) agora e opt-in no nutshell via
 `IO(name, { lock: true })`, passando pela mesma secao critica do io-engine
 (`io-append.js`); as duas engines foram comparadas sob a mesma carga com o
 tempo NO LOCK medido pelo mesmo ponto, e a interface do nutshell convergiu
@@ -106,14 +106,14 @@ disco). Removido: `io-nutshell.concurrency.test.js` caiu de ~7s (flaky) para
 ## Escopo
 
 `src/adapters/io-append.js` e `src/io-engine.js` foram adicionados ao `files:`
-da feature 3.3 (agora reivindicados por 3.3 E 4.1) — as mudancas neles sao o
+da feature 3.3 (agora reivindicados por 3.3 E 5.1) — as mudancas neles sao o
 hook de timing e as marcas hrtime, inertes fora do bench, e existem so para a
 comparacao que a feature pede. `sprint files --drift` limpo.
 
 A convergencia COMPLETA de assinatura (`IO(name, {path})` unificada, genesis
 lazy no io-engine, `close()` genuinamente opcional, reescrita dos 5 call sites
 `io-engine.test.js` / `.concurrency` / `.matrix` / `.bench.js` / `db-factory.js`)
-NAO entrou: toca arquivos da feature 4.1, dois deles travados pelos sprints 009
+NAO entrou: toca arquivos da feature 5.1, dois deles travados pelos sprints 009
 (1.4) e 010 (1.5) ainda abertos. Fica para um sprint proprio, planejado em
 seguida rumo ao v0.1.
 

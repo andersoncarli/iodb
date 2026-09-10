@@ -59,7 +59,7 @@ eval("bun nutshell/smoke-io.js", (out, r) => {
 //    O numero da doc portanto NAO esta confirmado: e alcancavel, nao tipico.
 //    O check afirma so o que se sustenta — que o smoke completa e reporta um
 //    throughput mensuravel — e deixa o valor publicado como questao aberta
-//    para um sprint de benchmark honesto (a 2.1 fez isso para o io-engine).
+//    para um sprint de benchmark honesto (a 4.1 fez isso para o io-engine).
 eval("bun nutshell/smoke-io.js", (out) => {
   const m = out.match(/\((\d+) rec\/s\)/)
   check(m !== null)

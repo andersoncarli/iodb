@@ -1,7 +1,7 @@
 ---
 sprint: 4
 date: 2026-09-07
-features: [2.1]
+features: [4.1]
 thread: null
 ---
 # 004 — benchmark-de-secao-critica
@@ -41,4 +41,4 @@ crítica), é custo de pré-computo fora do lock.
 Baseline nos 6 pontos da grade, auditável e reproduzível. Confirma a régua do usuário: a
 seção crítica hoje está muito acima do sub-ms em stores grandes, e piora sob concorrência —
 em 100k×8 processos, 7 de 8 workers bateram o `lockTimeout`. Esse é o número que decide se
-`2.2` funcionou.
+`4.2` funcionou.

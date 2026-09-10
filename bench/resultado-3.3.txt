@@ -8,7 +8,7 @@
 #
 # O QUE MUDOU: o nutshell ganhou um caminho coordenado OPT-IN — IO(name, { lock: true }).
 # Passa pela MESMA secao critica do io-engine (src/adapters/io-append.js, protocolo
-# presence-based da feature 2.3): ausencia = livre, PID no nome do lockfile, wx para
+# presence-based da feature 4.3): ausencia = livre, PID no nome do lockfile, wx para
 # adquirir, unlink para soltar, sweep de holder morto por kill(pid,0). O padrao
 # continua { lock: false } e a doc segue valendo: "No locks. No WAL. No fsync."
 # para quem nao pede.
@@ -29,7 +29,7 @@ estourar 900ms, cronometrando cada io.in() E, dentro dele, duas fases do lock:
   lockWait  — ns girando no spin de acquireLock ate ganhar o `wx`
   critical  — ns com o lock EFETIVAMENTE seguro (resync + compute + append + commit)
 Tudo o que cada engine publica FORA do lock (YAML + indice no io-engine, JSON no
-nutshell) NAO entra nessas duas fases — por desenho da feature 2.2.
+nutshell) NAO entra nessas duas fases — por desenho da feature 4.2.
 
 ## TABELA A — custo por io.in() e vazao (mediana de 5 rodadas, 2-3 baterias)
 

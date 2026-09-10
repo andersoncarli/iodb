@@ -1,6 +1,6 @@
 // Roteiro de avaliacao — feature 3.2: o modo de falha do nutshell sob
 // concorrencia multi-processo esta CARACTERIZADO como teste que roda.
-// Escopo fechado: caracteriza, nao corrige. O modo coordenado e da 2.2.
+// Escopo fechado: caracteriza, nao corrige. O modo coordenado e da 4.2.
 
 // 1. O teste existe, e no diretorio do nutshell — ele testa o nutshell, nao o
 //    io-engine, e roda com a suite do nutshell.
@@ -58,6 +58,6 @@ eval("grep -c 'price of' nutshell/io-nutshell.md", (out) => check(out.trim(), "1
 //    nem o io-engine e seus vizinhos foram tocados.
 eval("git diff --stat HEAD -- nutshell/io-nutshell.js nutshell/io-hash.js io-engine.js hash.js | wc -l", (out) => check(out.trim(), "0"))
 
-// 9. O modo coordenado NAO existe ainda — { lock: true } e entrega da 2.2,
+// 9. O modo coordenado NAO existe ainda — { lock: true } e entrega da 4.2,
 //    junto com a extracao do io-append.js. Vermelho aqui = escopo vazou.
 eval("grep -c 'lock' nutshell/io-nutshell.js; true", (out) => check(out.trim(), "0"))

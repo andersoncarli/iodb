@@ -36,6 +36,6 @@ resposta como teste que roda, nao como paragrafo num relatorio.
 
 ## Escopo — o que este sprint NAO faz
 
-Nao corrige. O modo coordenado do nutshell (`{ lock: true }`) e entrega da **2.2**,
+Nao corrige. O modo coordenado do nutshell (`{ lock: true }`) e entrega da **4.2**,
 que extrai a secao critica como modulo `io-append.js` com dois consumidores. Aqui
 so se caracteriza o comportamento default, que a doc declara e que continua valendo.

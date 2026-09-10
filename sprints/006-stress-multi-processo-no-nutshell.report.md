@@ -62,7 +62,7 @@ falso rigor.
 
 Suite do nutshell: 9 testes, 29 checks, verde. Feature 3.2 em 🟢 avaliada.
 
-O modo coordenado (`{ lock: true }`) fica para a **2.2**, que extrai a secao critica
+O modo coordenado (`{ lock: true }`) fica para a **4.2**, que extrai a secao critica
 como `io-append.js` — modulo com dois consumidores, io-engine e nutshell. Quando isso
 landar, este teste continua descrevendo o comportamento **default** do nutshell, que
 segue sendo sem locks.

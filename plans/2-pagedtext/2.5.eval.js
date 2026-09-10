@@ -13,7 +13,7 @@
 // lista ordenada por posicao — layouts de pagina diferentes.
 
 // 1. O nucleo paginado e SINCRONO. O io-engine escreve dentro da secao critica
-//    do lock (2.2/2.3); um `await` ali dentro reabre a secao critica. Nenhum
+//    do lock (4.2/4.3); um `await` ali dentro reabre a secao critica. Nenhum
 //    fs/promises no pagedtext.
 eval("grep -c \"from 'node:fs/promises'\" pagedtext/pagedtext.js", (out) => check(out.trim(), "0"))
 eval("grep -c \"writeSync\\|readSync\\|fsyncSync\" pagedtext/pagedtext.js", (out) => check(Number(out.trim()) >= 3))
@@ -80,7 +80,7 @@ eval("grep -c \"paged ? materialize(projection)\" src/io-engine.js", (out) => ch
 
 // 8. .proj E DERIVADO, escrito no yield periodico e no close() — NAO por
 //    append. Flush por append poria o rewrite O(store) de volta na hot path,
-//    que e o que a 2.2 removeu.
+//    que e o que a 4.2 removeu.
 eval("sed -n '/if (yieldFlush) {/,/}/p' src/io-engine.js", (out) => {
   check(out.includes("__flushPages"))
 })
