@@ -99,3 +99,47 @@ test("Custom Reduce", async ({ check, withTempDir }) => {
     check(io.get()[1].msg, 'world')
   })
 })
+
+// ── feature 3.3 — interface convergence with io-engine ───────────────────────
+// Code written against io-engine calls io.open(payload) then io.close(). Both
+// are optional on the nutshell (lazy genesis, projection on every flush), but
+// they must EXIST and be harmless so the same code runs on either engine.
+
+test("open/close are optional no-ops", async ({ check, withTempDir }) => {
+  await withTempDir(async dir => {
+    const io = IO('lc', { path: dir })
+    check(io.open(), io)       // chainable, like io-engine
+    io.in({ a: 1 })
+    check(io.close(), io)      // nothing to flush — projection already on disk
+    check(io.get('a'), 1)
+
+    // A second handle sees everything: close() left nothing pending.
+    check(IO('lc', { path: dir }).get('a'), 1)
+  })
+})
+
+test("open(payload) seeds record #0, like io-engine", async ({ check, withTempDir }) => {
+  await withTempDir(async dir => {
+    const io = IO('seeded', { path: dir })
+    io.open({ _entity: 'users', _type: 'kv' })
+    io.in({ name: 'alice' })
+
+    check(io.header()._entity, 'users')
+    check(io.header()._type, 'kv')
+    check(io.get('name'), 'alice')
+  })
+})
+
+test("header / state / find match io-engine's readers", async ({ check, withTempDir }) => {
+  await withTempDir(async dir => {
+    const io = IO('rd', { path: dir, reduce: (acc, rec) => [...acc, rec], initial: [] })
+    io.in({ kind: 'a', n: 1 })
+    io.in({ kind: 'b', n: 2 })
+    io.in({ kind: 'a', n: 3 })
+
+    check(io.header()._type, 'io')          // default genesis header
+    check(io.state()._projection, 'rd')
+    check(io.find(p => p.kind === 'a').length, 2)
+    check(io.find(p => p.n > 1).map(p => p.n).join(','), '2,3')
+  })
+})

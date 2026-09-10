@@ -54,6 +54,10 @@ export function IO(name, opts = {}) {
     // what the doc says it is: no locks, no WAL, no fsync. With it, writes go
     // through the same critical section io-engine.js uses (io-append.js).
     lock = false,
+    // Optional timing hook, forwarded straight to appendGuarded (locked path
+    // only): onPhase('lockWait'|'critical', ns). Zero cost when absent. Only
+    // bench/compare-3.3.js passes it.
+    onPhase,
   } = opts
 
   const projExt = projection.ext || '.json'
@@ -143,9 +147,12 @@ export function IO(name, opts = {}) {
     return { flushed, text: lines.join('') }
   }
 
-  function writeGenesis() {
+  // `initPayload` is the one thing io-engine's open() does that we could not:
+  // put a caller-chosen record at #0 instead of the fixed {_entity,_type} header.
+  // Passing nothing keeps the old default, so every existing call is unchanged.
+  function writeGenesis(initPayload) {
     if (existsSync(logFile) && readFileSync(logFile, 'utf8').length > 0) return
-    const g0 = { _entity: name, _type: 'io' }
+    const g0 = initPayload ?? { _entity: name, _type: 'io' }
     const g1 = { _projection: name }
     appendFileSync(logFile, formatLine('0', g0) + '\n' + formatLine('1', g1) + '\n')
     prefixSet.add('0'); prefixSet.add('1')
@@ -174,6 +181,7 @@ export function IO(name, opts = {}) {
         lockFile,
         logFile,
         lastOffset: loadedOffset,
+        onPhase,
         // Another writer appended while we were computing: drop the keys we
         // speculated, replay what actually landed, and re-chain onto it.
         onResync: () => {
@@ -213,6 +221,22 @@ export function IO(name, opts = {}) {
   }
 
   return {
+    // ── Lifecycle: optional here, required in io-engine ─────────────────────
+    // io-engine needs open() (genesis election under lock) and close() (its
+    // final YAML flush — it publishes the projection only every 100th flush).
+    // The nutshell elects genesis lazily on first write and re-publishes its
+    // JSON projection on EVERY flush, so it has nothing to open and nothing to
+    // close. These two exist purely so code written against io-engine — which
+    // calls io.open() then io.close() — runs unchanged on this engine.
+    //
+    // The one real effect: open(payload) lets a caller seed record #0, exactly
+    // as io-engine's open(initPayload) does.
+    open(initPayload) {
+      if (initPayload != null && !(existsSync(logFile) && logSize() > 0)) writeGenesis(initPayload)
+      return this
+    },
+    close() { return this },
+
     in(record, autoFlush = true) {
       state = reduce(state, record)
       buffer.push(record)
@@ -242,6 +266,18 @@ export function IO(name, opts = {}) {
     },
 
     verify() { return verify(this.records()) },
+
+    // Convenience readers io-engine already exposes, one-liners over what the
+    // nutshell has anyway — so `header()`, `state()`, `find()` mean the same
+    // thing on both engines. header/state read the log directly: the genesis
+    // records ('0','1') are deliberately kept out of hashMap (loadFrom skips
+    // them), so get('#0') cannot see them.
+    header() { return this.records().find(r => r.key === '0')?.payload },
+    state() { return this.records().find(r => r.key === '1')?.payload },
+    find(pred) {
+      return this.records().filter(r => r.key !== '0' && r.key !== '1').map(r => r.payload).filter(pred)
+    },
+
     get size() { return recordCount },
     get name() { return name },
     path: () => logFile,

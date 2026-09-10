@@ -275,8 +275,15 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
 
     // ── Acquire lock (spin ≤ 1000ms) ─────────────────────────────────────────
     if (t) t.lockWaitStart = t.precomputeEnd
+    // Nanosecond marks alongside the ms ones: the ms Date.now() marks feed
+    // io-engine.bench.js unchanged, while _lockWaitNs / _criticalNs give
+    // bench/compare-3.3.js the same resolution the nutshell gets from
+    // appendGuarded's onPhase hook — the lock cost is sub-millisecond and
+    // Date.now() cannot see it.
+    const _wNs0 = t ? process.hrtime.bigint() : 0n
     const myLock = acquireLock(f.lock)
-    if (t) t.lockAcquired = Date.now()   // seção crítica começa aqui
+    if (t) { t.lockAcquired = Date.now(); t._lockWaitNs = Number(process.hrtime.bigint() - _wNs0) }   // seção crítica começa aqui
+    const _cNs0 = t ? process.hrtime.bigint() : 0n
 
     try {
       // ── Verify chain: re-compute if another writer got in (size check only) ─
@@ -327,7 +334,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // ~790ms, and it ran with the lock held.
       const yieldFlush = ++flushCount % 100 === 0
       releaseLock(myLock, f.lock)       // release: rename the mutex back, nothing else
-      if (t) t.lockReleased = Date.now()   // seção crítica termina aqui
+      if (t) { t.lockReleased = Date.now(); t._criticalNs = Number(process.hrtime.bigint() - _cNs0) }   // seção crítica termina aqui
 
       // ── Publish derived state, lock released ─────────────────────────────
       if (t) t.publishStart = t.lockReleased

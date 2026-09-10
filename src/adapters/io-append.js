@@ -145,6 +145,13 @@ export function releaseLock(myLock, _lockFile) {
  *               meanwhile, so the caller can re-chain against what landed.
  *               `resynced` tells it which of the two it is.
  *   onResync(size)  optional: caller reloads its own state from the log first.
+ *   onPhase(name, ns)  optional timing hook, zero cost when absent. Fires with
+ *               `'lockWait'` (nanoseconds spent spinning in acquireLock) and
+ *               `'critical'` (nanoseconds the lock was actually held: resync +
+ *               compute + append + commit). Both engines route through here, so
+ *               the two numbers are apples to apples across io-engine and the
+ *               nutshell — everything else each engine does (its projection, its
+ *               index) is OUTSIDE this call by design and is not counted.
  *
  * Returns { bytes, offset, resynced, result } where `result` is whatever
  * `commit` returned — the caller's own bookkeeping, run while still holding the
@@ -153,10 +160,13 @@ export function releaseLock(myLock, _lockFile) {
  * Everything derived (indexes, projections, snapshots) belongs AFTER this call.
  * That is the whole point of the feature.
  */
-export function appendGuarded({ lockFile, logFile, lastOffset = 0, compute, onResync, timeout }) {
+export function appendGuarded({ lockFile, logFile, lastOffset = 0, compute, onResync, onPhase, timeout }) {
   const size = () => { try { return statSync(logFile).size } catch { return 0 } }
 
+  const _w0 = onPhase ? process.hrtime.bigint() : 0n
   const myLock = acquireLock(lockFile, timeout ?? LOCK_TIMEOUT)
+  if (onPhase) onPhase('lockWait', Number(process.hrtime.bigint() - _w0))
+  const _c0 = onPhase ? process.hrtime.bigint() : 0n
 
   try {
     // Did anyone else append while we were getting here? A size comparison is
@@ -186,6 +196,7 @@ export function appendGuarded({ lockFile, logFile, lastOffset = 0, compute, onRe
     // Release even if compute/commit threw: a held lock outlives the error and
     // would strand every other writer until the timeout sweep reclaims it.
     try { releaseLock(myLock, lockFile) } catch { }
+    if (onPhase) onPhase('critical', Number(process.hrtime.bigint() - _c0))
   }
 }
 

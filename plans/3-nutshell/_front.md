@@ -2,7 +2,7 @@
 front: 3
 keyword: nutshell
 title: Nutshell — revisao from-scratch do primitivo IO
-state: active
+state: confirmed
 updated: 2026-09-08
 ---
 # [3] nutshell — revisao from-scratch do primitivo IO

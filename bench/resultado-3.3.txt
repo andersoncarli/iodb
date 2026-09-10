@@ -1,0 +1,122 @@
+# Resultado — feature 3.3 (lock de presenca no nutshell — custo por operacao)
+#
+# commit:  (staged, sprint 011)
+# data:    2026-09-09
+# host:    4 vCPU, Linux 6.17.0-22-generic x86_64, Bun 1.3.x
+# comando: bun bench/compare-3.3.js [WORKERS] [WINDOW_MS] [WARM] [ROUNDS]
+#          default: 3 workers, janela 900ms, warm-up 200, 5 rodadas
+#
+# O QUE MUDOU: o nutshell ganhou um caminho coordenado OPT-IN — IO(name, { lock: true }).
+# Passa pela MESMA secao critica do io-engine (src/adapters/io-append.js, protocolo
+# presence-based da feature 2.3): ausencia = livre, PID no nome do lockfile, wx para
+# adquirir, unlink para soltar, sweep de holder morto por kill(pid,0). O padrao
+# continua { lock: false } e a doc segue valendo: "No locks. No WAL. No fsync."
+# para quem nao pede.
+#
+# Este sprint tambem instrumentou io-append.js com um hook onPhase(name, ns) opcional
+# (zero custo sem callback) e adicionou marcas hrtime t._lockWaitNs / t._criticalNs
+# no io-engine, para medir o LOCK nas duas engines pelo mesmo ponto e na mesma
+# resolucao (nanossegundos — o lock e sub-milissegundo e Date.now() nao o ve).
+
+## O QUE O BENCH MEDE
+
+3 workers quentes, cada um martelando SO a sua propria chave (a chave e o PID, o
+valor incrementa). Nenhuma colisao de prefixo entre workers — isola o custo do
+PROTOCOLO do defeito de prefixo curto (feature 1.5, ainda aberto).
+
+Cada worker: warm-up de 200 escritas fora da medicao; depois escreve em loop ate
+estourar 900ms, cronometrando cada io.in() E, dentro dele, duas fases do lock:
+  lockWait  — ns girando no spin de acquireLock ate ganhar o `wx`
+  critical  — ns com o lock EFETIVAMENTE seguro (resync + compute + append + commit)
+Tudo o que cada engine publica FORA do lock (YAML + indice no io-engine, JSON no
+nutshell) NAO entra nessas duas fases — por desenho da feature 2.2.
+
+## TABELA A — custo por io.in() e vazao (mediana de 5 rodadas, 2-3 baterias)
+
+| engine    | agg ops/s | µs/op med | p50 µs | p95 µs   | p99 µs   | ops/worker    |
+|-----------|-----------|-----------|--------|----------|----------|---------------|
+| io-engine |  ~490–600 | ~5000–6100| ~4300  | ~12–14k  | ~18–23k  | balanceado    |
+| nutshell  |  ~510–640 | ~4800–5900|  ~740  | ~22–37k  | ~60–88k  | DESBALANCEADO |
+
+## TABELA B — tempo NO LOCK (mesmo ponto: io-append.js onPhase / io-engine t._*Ns)
+
+| engine    | lockWait µs  mean/p50/p95/p99      | critical µs  mean/p50/p95/p99       |
+|-----------|-----------------------------------|------------------------------------|
+| io-engine |  ~530 / ~310 / ~2000 / ~5000       |  ~1650 / ~1100 / ~5100 / ~10000    |
+| nutshell  |  ~180 / ~150 / ~360 / ~700         |  ~4600 / ~370 / ~34000 / ~65000    |
+
+## LEITURA
+
+### O nutshell PEGA o lock mais rapido — lockWait ~3x menor, cauda ~7x menor
+
+~150µs p50 contra ~310µs; p99 ~700µs contra ~5000µs. Menos trabalho por
+operacao no vizinho -> a secao critica alheia fecha mais cedo -> o `wx` da certo
+na primeira ou segunda tentativa. O spin sem yield de acquireLock (io-append.js)
+favorece quem tem secao critica curta.
+
+### O nutshell SEGURA o lock menos tempo NO CASO COMUM — critical p50 ~370µs vs ~1100µs
+
+3x mais curto. A razao e direta: a secao critica do io-engine inclui computeKeys
++ o reduce da projecao DENTRO do lock (io-engine.js:290-294 no ramo resync, e a
+montagem de `allBytes` antes). A do nutshell e so stat + append + o chain() dos
+poucos payloads em buffer. Menos codigo sob o lock = lock mais curto.
+
+### MAS a cauda de critical do nutshell EXPLODE — p99 ~65ms contra ~10ms
+
+Isto e o preco do desenho, e e onde o nutshell fica MUITO atras. Quando outro
+worker apendou enquanto este montava a escrita, appendGuarded dispara onResync,
+e o onResync do nutshell (io-nutshell.js:179-186) RELE O LOG INTEIRO e
+re-encadeia — SOB O LOCK. Com 3 workers martelando a mesma base, resync e o caso
+comum, nao a excecao, e cada um relê um log que so cresce. O io-engine tem um
+resync analogo (syncFrom) mas parte de um indice em memoria com lastOffset, entao
+o delta e menor e o p99 fica em ~10ms.
+
+### Vazao agregada: praticamente EMPATE (~490-640 ops/s nas duas)
+
+O µs/op mediano quase coincide (~5000-6000µs) porque as duas curvas se cruzam: o
+nutshell ganha no p50 (publica menos) e perde no p95/p99 (resync sob lock). Sob
+3 workers x 900ms num store que cresce, um efeito cancela o outro. NENHUMA das
+duas "vence" este bench de forma limpa.
+
+### ops/worker desbalanceado no nutshell (ex.: 53 / 140 / 181, ate 45 / 70 / 371)
+
+O spin-lock sem yield + secao critica curta = STARVATION: o worker que perde a
+corrida do `wx` volta a girar imediatamente e perde de novo. O io-engine, com
+critical ~3x mais longo, da a todos mais janela para entrar — os ops/worker
+ficam parelhos quase por acidente, nao por o lock ser mais justo.
+
+## DIFERENCA DE DESENHO (registrada, nao mediada)
+
+  io-engine                          nutshell { lock: true }
+  ─────────────────────────────      ─────────────────────────────
+  computeKeys + reduce DENTRO do     so stat + append + chain(buffer)
+    lock                               dentro do lock
+  resync parte de indice+lastOffset  resync RELÊ O LOG INTEIRO sob lock
+  critical p50 ~1100µs, p99 ~10ms    critical p50 ~370µs, p99 ~65ms
+  lockWait mais longo (spin perde    lockWait curto (vizinho fecha cedo)
+    mais)
+  publica YAML+indice fora do lock   publica so JSON fora do lock
+  lock sempre ligado                 lock opt-in, default false
+
+  MESMO io-append.js. MESMO protocolo presence-based. MESMO spin sem yield.
+  O nutshell e mais leve NO CASO COMUM por fazer menos sob o lock — e paga isso
+  na cauda, porque o pouco que faz (o resync) e O(log inteiro). A vantagem e do
+  contrato mais enxuto, nao do lock; o lock e o mesmo codigo.
+
+## RESSALVA — verify().valid FORA DE ESCOPO AQUI
+
+Este bench nao usa colisao de prefixo entre workers (cada um so a sua chave),
+entao verify() nao e o alvo. O caso de seguranca (240/240 registros, 0 crashes,
+0 timeouts sob 8 workers colidindo) esta nos testes de concorrencia. Enquanto a
+feature 1.5 nao cair, verify().valid reprova sob prefixo colidindo nas DUAS
+engines — paridade do defeito, medida la.
+
+## VERIFY
+
+  bun ../utest/utest.js nutshell/io-nutshell.concurrency.test.js --force   → 15 ✓
+  bun ../utest/utest.js src/io-engine.test.js --force                      → 55 ✓
+  bun src/io-engine.bench.js  (marcas ms Date.now() intactas — bench inalterado)
+
+  Casos da feature 3.3 em io-nutshell.concurrency.test.js:
+    - "8 concurrent writers, { lock: true }: no loss, no crash, no lock timeout"
+    - "{ lock: false } is unchanged: still keeps every record, still no crash"

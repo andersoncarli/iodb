@@ -48,6 +48,24 @@ Five verbs. That's it.
 | `get('#key')` | Read a specific record by hash |
 | `flush()` | Flush buffered writes to disk |
 
+### Interop with io-engine
+
+The sibling engine `src/io-engine.js` shares this shape. Code written for it —
+`io.open(payload)` before the first write, `io.close()` at the end — runs on the
+nutshell unchanged:
+
+| Verb | On the nutshell |
+|------|-----------------|
+| `open(payload)` | Optional. Seeds record `#0` if given; otherwise a no-op — genesis is elected lazily on first write. Returns `this`. |
+| `close()` | Optional no-op, returns `this`. io-engine needs it to flush its YAML projection (published only every 100th write); the nutshell re-publishes its JSON projection on **every** flush, so there is nothing to close. |
+| `header()` / `state()` | Genesis records `#0` / `#1`, read straight from the log. |
+| `find(pred)` | `records()` minus genesis, payloads filtered by `pred`. |
+
+The one asymmetry that remains is deliberate: io-engine defers its `stringify`-heavy
+YAML projection and needs `close()` to flush it; the nutshell's projection is small
+JSON and always current. Everything else — `in` / `out` / `get` / `flush` / `verify`
+/ `size` — means the same on both.
+
 Every `in()` returns a hash key. Every hash key is a permanent address. Every `out()` fires synchronously after the write hits disk.
 
 ---
@@ -216,6 +234,8 @@ All on a single-process, local SSD, Bun runtime:
 No locks. No WAL. No fsync. No binary protocol. No schema. No indexes beyond the hash map. No event bus. No dependency on anything but `node:crypto` and `node:fs`.
 
 The price of "no locks" is measured, not assumed: 8 processes writing one base lose **no records** (POSIX appends are atomic) but break the chain — 170 distinct keys out of 240, because each process computes prefixes against its own `prefixSet`. `verify()` reports it. See `io-nutshell.concurrency.test.js`.
+
+There is one **opt-in** escape hatch: `IO('state', { lock: true })` routes writes through the same presence-based critical section `io-engine.js` uses (`../src/adapters/io-append.js`) — absence means free, PID in the lock filename, `wx` to acquire, `unlink` to release, dead-holder sweep via `kill(pid,0)`. It is off by default and the sentence above stays true for every caller who does not ask. With it on, the same 8×30 load lands all 240 records with 0 crashes and 0 lock timeouts. `bench/compare-3.3.js` runs that load against both engines; `bench/resultado-3.3.txt` records where the numbers diverge and why.
 
 The entire system is **one file, one export, zero configuration**.
 
