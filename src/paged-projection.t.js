@@ -106,6 +106,45 @@ test('paged-projection: sequential layout preserves append order', async ({ chec
   })
 })
 
+// Uma projecao sequencial responde como uma Array, e nao so nos cinco metodos
+// que alguem lembrou de listar. Ate a 2.5 havia uma lista branca
+// (reduce/map/filter/forEach/slice) e TODO o resto caia no ramo keyed, que
+// itera a pagina como pares [chave,valor] — numa pagina sequencial isso estoura
+// com "{} is not iterable". Quebravam 22 metodos medidos, `toJSON` entre eles,
+// o que fazia `JSON.stringify` de um store append lancar excecao.
+//
+// O teste cobre metodos de FORA da antiga lista branca de proposito: e o buraco
+// que a lista deixava, e nao o que ela ja acertava.
+test('paged-projection: sequential responde como Array, nao so na lista branca', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'seq-array')
+    const p = PagedProjection(file, { layout: 'sequential', pageSize: PS })
+    for (let i = 0; i < 600; i++) p.push({ i })
+    p.__flushPages()
+
+    const q = PagedProjection(file, { layout: 'sequential', pageSize: PS })
+    // O caminho que lancava: serializar a projecao inteira.
+    check(JSON.parse(JSON.stringify(q)).length, 600)
+    check(q.at(0).i, 0)
+    check(q.at(-1).i, 599)
+    // indexOf/includes comparam por IDENTIDADE, e cada leitura materializa a
+    // pagina de novo — entao `q[7]` nunca e o mesmo objeto duas vezes. Isso e
+    // propriedade do store, nao defeito: compara-se dentro de UMA lista.
+    const lista = q.map(x => x)
+    check(lista.indexOf(lista[7]), 7)
+    check(q.some(x => x.i === 599), true)
+    check(q.every(x => typeof x.i === 'number'), true)
+    check(q.find(x => x.i === 300).i, 300)
+    check(q.findIndex(x => x.i === 300), 300)
+    check(lista.includes(lista[42]), true)
+    check(q.join('|').length > 0, true)
+    // E a lista delegada tem que ser a MESMA sequencia que a iteracao ve,
+    // atravessando fronteira de pagina — senao os metodos concordam entre si e
+    // discordam do arquivo.
+    check(JSON.stringify(q.map(x => x.i)), JSON.stringify([...q].map(x => x.i)))
+  })
+})
+
 test('paged-projection: materialize round-trips through JSON', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const p = PagedProjection(join(dir, 'proj'), { layout: 'keyed', pageSize: PS })

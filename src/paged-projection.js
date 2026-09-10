@@ -270,9 +270,26 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
       if (isSeq && (prop === 'push')) {
         return (...vals) => { for (const v of vals) pushSeq(v); return this.length }
       }
-      if (isSeq && (prop === 'reduce' || prop === 'map' || prop === 'filter' || prop === 'forEach' || prop === 'slice')) {
+      // LAYOUT SEQUENCIAL: tudo o que sobra e resolvido contra a LISTA, e nunca
+      // contra `getKeyed`. Antes daqui havia uma lista branca de cinco metodos
+      // (reduce/map/filter/forEach/slice) e todo o resto caia no ramo keyed, que
+      // itera a pagina como pares [chave, valor] — numa pagina sequencial isso e
+      // `for (const [k,v] of {})` e estoura com "{} is not iterable".
+      //
+      // O defeito nao era de um metodo: quebravam `toJSON`, `join`, `indexOf`,
+      // `find`, `some`, `at`, `includes`, `sort`, `entries`, `pop` — 22 medidos.
+      // E `toJSON` significa que um `JSON.stringify` da projecao paginada em
+      // modo append lancava excecao, que e o caminho por onde ela seria salva ou
+      // inspecionada.
+      //
+      // A lista branca era a forma errada: ela enumera o que funciona, entao
+      // todo metodo de Array que ela nao previu nasce quebrado. Delegar a lista
+      // inverte isso — o que a Array sabe fazer, a projecao sabe.
+      if (isSeq) {
+        if (typeof prop !== 'string') return undefined
         const all = allSeq()
-        return all[prop].bind(all)
+        const v = all[prop]
+        return typeof v === 'function' ? v.bind(all) : v
       }
       if (typeof prop !== 'string') return undefined
       return getKeyed(prop)

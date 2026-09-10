@@ -134,3 +134,33 @@ test('io-engine paged: verify() chain stays valid', async ({ check, withTempDir 
     check(re.verify().valid, true)
   })
 })
+
+// O `.yaml` deixou de ser reescrito a cada 100 flushes (feature 2.5) e passou a
+// ser derivado SOB DEMANDA. A razao e medida: `stringify` da projecao e O(n) e
+// rodava periodicamente para produzir um arquivo que NINGUEM le de volta — nao
+// ha um so `readFileSync(f.yaml)` no src/. Custo O(n) recorrente por um artefato
+// de leitura humana que talvez ninguem abra.
+//
+// O arquivo existe desde a genese do store, entao o teste nao pergunta "existe?"
+// e sim "acompanha?": apos 250 escritas ele continua no tamanho da genese, e so
+// cresce quando alguem pede.
+test('io-engine paged: o .yaml e derivado sob demanda, nao a cada 100 flushes', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const base = join(dir, 'store')
+    const io = IO(base, { reduce: assign, initial: {}, pageSize: PS })
+    io.open()
+    for (let i = 0; i < 250; i++) io.in({ [`k${i}`]: { v: i } })
+
+    const y = base + '.yaml'
+    const parado = statSync(y).size
+    check(parado < 200, true)          // ainda no tamanho da genese
+
+    io.yaml()                          // quem quer olhar, pede
+    const pedido = statSync(y).size
+    check(pedido > parado, true)
+    check(pedido > 2000, true)         // a projecao inteira, agora sim
+
+    io.close()
+    check(statSync(y).size >= pedido, true)   // o close mantem em dia
+  })
+})

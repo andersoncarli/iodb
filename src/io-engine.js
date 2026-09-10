@@ -525,6 +525,17 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // p99=17ms at 1k records to 733ms at 100k, and in 100k×8 seven of eight
       // workers hit the lock timeout. `stringify` of a 100k projection alone is
       // ~790ms, and it ran with the lock held.
+      // O `.yaml` NAO e mais reescrito a cada 100 flushes (feature 2.5). Ele e
+      // derivado SOB DEMANDA: quem quer olhar, pede — `yaml()` na API publica —
+      // e o `close()` grava a versao final. O contador segue existindo porque o
+      // `.proj` continua sendo esvaziado periodicamente; o que saiu da carona
+      // dele e so o YAML.
+      //
+      // A razao e medida, nao estetica: `stringify` do projection e O(n) e ele
+      // rodava a cada 100 flushes sobre a projecao INTEIRA, enquanto o arquivo
+      // que ele produz nunca e lido de volta por ninguem — nao ha um so
+      // `readFileSync(f.yaml)` no `src/`. Era custo O(n) recorrente para
+      // alimentar um artefato de leitura humana que talvez ninguem abra.
       const yieldFlush = ++flushCount % 100 === 0
       releaseLock(myLock, f.lock)       // release: rename the mutex back, nothing else
       if (t) { t.lockReleased = Date.now(); t._criticalNs = Number(process.hrtime.bigint() - _cNs0) }   // seção crítica termina aqui
@@ -534,7 +545,6 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       saveIndex()                       // arbitrated by lastOffset (see saveIndex)
       if (yieldFlush) {
         if (paged) projection.__flushPages()
-        publishYaml()
       }
 
       // ── Emit after lock released so handlers can write without deadlock ──
@@ -656,8 +666,10 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (paged && existsSync(f.dash)) {
         try { projection.__flushPages() } catch { }
       }
-      // Flush pending yaml/index if not already up-to-date
-      if (flushCount % 100 !== 0 && existsSync(f.dash)) {
+      // O YAML final. Agora que ele nao e mais escrito a cada 100 flushes, o
+      // `close()` e o unico ponto automatico — e por isso a condicao deixou de
+      // olhar o contador: ele nao diz mais nada sobre o YAML estar em dia.
+      if (existsSync(f.dash)) {
         const myLock = acquireLock(f.lock)
         try { flushYaml(projection, myLock) } catch { try { releaseLock(myLock, f.lock) } catch { } }
       }
@@ -665,6 +677,10 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     in: write,
     flush,
     get,
+    // O `.yaml` sob demanda. Ele deixou de ser reescrito periodicamente na 2.5;
+    // esta e a porta de quem quer olhar o estado em YAML sem esperar o
+    // `close()`. Devolve o caminho do arquivo que acabou de publicar.
+    yaml() { publishYaml(); return f.yaml },
     out:     (h) => { ON(`io:${name}`, h); return () => OFF(`io:${name}`, h) },
     records: recs,
     sessionRecords: () => _sessionRecs,
