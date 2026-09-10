@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { NodeAdapter } from './60-node.js'
+import { NodeAdapter } from './node-adapter.js'
 
 export const FolderAdapter = (path, opts = {}) => ({
   open: () => {

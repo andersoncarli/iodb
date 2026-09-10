@@ -10,13 +10,13 @@
 // nenhum coordena — dois processos podem escolher o mesmo prefixo para
 // payloads diferentes. Isso quebra verify() e e independente do mutex; esta
 // sonda mede e REPORTA (distinct vs records), sem reprovar por isso.
-import IO, { append } from "../../io-engine.js"
+import IO, { append } from "../../src/io-engine.js"
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { spawn } from "child_process"
 
-const ENGINE = join(import.meta.dirname ?? import.meta.dir, "..", "..", "io-engine.js")
+const ENGINE = join(import.meta.dirname ?? import.meta.dir, "..", "..", "src", "io-engine.js")
 const PROCS = Number(process.argv[2] ?? 8)
 const WRITES = Number(process.argv[3] ?? 30)
 

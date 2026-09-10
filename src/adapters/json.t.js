@@ -1,4 +1,4 @@
-import { JsonCollection } from './30-json.js';
+import { JsonCollection } from './json.js';
 import { join } from 'path';
 
 test('JSON Adapter', async ({ check }) => {

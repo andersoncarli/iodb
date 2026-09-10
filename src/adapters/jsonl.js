@@ -3,7 +3,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { LogCollection } from './collection-base.js'
+import { LogCollection } from '../collection-base.js'
 
 const jsonlFmt = (filePath) => {
   const base = filePath ? filePath.replace(/\.jsonl$|\.json$/, '') : null

@@ -5,7 +5,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { parse as parseYaml, stringify as stringifyYAML } from 'yaml'
-import { LogCollection, deepMerge } from './collection-base.js'
+import { LogCollection, deepMerge } from '../collection-base.js'
 
 const RECOGNIZERS = [
   // meta: bare `-:` or `-#hash:` or `meta:` or `meta#hash:` — no content ID between prefix and colon

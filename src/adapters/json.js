@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from 'fs'
-import { LogCollection } from './collection-base.js'
+import { LogCollection } from '../collection-base.js'
 
 const jsonFmt = (filePath) => {
   return {

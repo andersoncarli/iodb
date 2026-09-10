@@ -31,4 +31,4 @@ export {
   tokenId,
   shortestPrefix,
   verify,
-} from '../hash.js'
+} from '../src/hash.js'

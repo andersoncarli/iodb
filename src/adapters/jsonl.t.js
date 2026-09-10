@@ -1,4 +1,4 @@
-import { JsonlCollection } from './15-jsonl.js'
+import { JsonlCollection } from './jsonl.js'
 import { join } from 'path'
 import { rmSync, mkdirSync, existsSync } from 'fs'
 
@@ -29,7 +29,7 @@ test('JSONL Adapter: Basic operations',  async ({check}) => {
 
 test('JSONL Adapter: Buffer Extraction (Fast Path)',  async ({check}) => {
     await withTempDir(async (tmp) => {
-        const { jsonlFmt } = await import('./15-jsonl.js')
+        const { jsonlFmt } = await import('./jsonl.js')
         const fmt = jsonlFmt('extracted.jsonl')
         const buf = Buffer.from('{"item:1":{"val":100}}\n{"item:2":{"val":200}}\n')
 

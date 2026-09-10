@@ -1,4 +1,4 @@
-import { SqliteCollection } from './50-sqlite.js';
+import { SqliteCollection } from './sqlite.js';
 import { join } from 'path';
 
 test('SQLite Adapter',  async ({check}) => {

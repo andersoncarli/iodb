@@ -24,7 +24,7 @@ import yaml from './io-yaml'
 // hash keys
 import { toBits, makeFullKey, shortestPrefix, verify } from './io-hash'
 // shared critical section (io-engine.js uses the same module)
-import { appendGuarded, ensureLock } from '../io-append.js'
+import { appendGuarded, ensureLock } from '../src/adapters/io-append.js'
 
 // ── Log line format: {payload}#key ───────────────────────────────
 function formatLine(key, payload) { return JSON.stringify(payload) + '#' + key }

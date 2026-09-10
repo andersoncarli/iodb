@@ -2,7 +2,7 @@
 front: 1
 keyword: core
 title: Frente 1
-state: confirmed
+state: active
 updated: 2026-09-07
 ---
 # [1] core — Frente 1

@@ -1,7 +1,7 @@
 /**
  * io/adapters/10-dash.t.js — Deep purity and round-trip tests for Dashed DSL.
  */
-import { DashCollection, Node } from './10-dash.js'
+import { DashCollection, Node } from './dash.js'
 import { writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 

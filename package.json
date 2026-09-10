@@ -2,7 +2,7 @@
   "name": "iodb",
   "version": "1.4.0",
   "description": "Reactive DB/IO engine: polymorphic factory, universal node resolver, and file/yaml/json/sqlite/dash adapters",
-  "main": "db.js",
+  "main": "src/db.js",
   "type": "module",
   "scripts": {
     "test": "bun ../utest/utest.js ."

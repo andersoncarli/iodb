@@ -1,6 +1,6 @@
 import { parse, stringify } from 'yaml'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { LogCollection } from './collection-base.js'
+import { LogCollection } from '../collection-base.js'
 
 const yamlFmt = (filePath) => {
   return {

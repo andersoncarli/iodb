@@ -11,13 +11,13 @@
 
 // 1. O mutex existe como membro proprio da familia, irmao de dash/yaml/index.
 //    Se o lock nao tem arquivo proprio, nada abaixo disto significa coisa alguma.
-eval("grep -n 'lock:' io-engine.js", (out) => check(out.includes("lock:")))
+eval("grep -n 'lock:' src/io-engine.js", (out) => check(out.includes("lock:")))
 
-// 2. A engine adotou o protocolo de io-append.js em vez de manter uma copia.
+// 2. A engine adotou o protocolo de src/adapters/io-append.js em vez de manter uma copia.
 //    Duas implementacoes do mesmo lock divergem — foi por isso que a 2.2 o
 //    extraiu. Aqui provamos que a copia local sumiu de fato.
-eval("grep -c \"from './io-append.js'\" io-engine.js", (out) => check(out.trim(), "1"))
-eval("grep -c '^function acquireLock' io-engine.js", (out) => check(out.trim(), "0"))
+eval("grep -c \"from './adapters/io-append.js'\" src/io-engine.js", (out) => check(out.trim(), "1"))
+eval("grep -c '^function acquireLock' src/io-engine.js", (out) => check(out.trim(), "0"))
 
 // 3. AUSENCIA = LIVRE. O estado livre e "nao ha f.lock.* nenhum", que todo
 //    diretorio novo ja satisfaz — entao o mutex nao tem nascimento: nao ha
@@ -25,8 +25,8 @@ eval("grep -c '^function acquireLock' io-engine.js", (out) => check(out.trim(), 
 //    armadilha que o 007 mediu (create-if-missing durante a posse forja um
 //    SEGUNDO mutex e dois escritores entram juntos) nao pode sequer ser
 //    escrita. Some uma classe inteira de bug, nao uma instancia dela.
-eval("grep -c 'ensureLock' io-engine.js", (out) => check(out.trim(), "0"))
-eval("sed -n '/export function acquireLock/,/^}/p' io-append.js", (out) => {
+eval("grep -c 'ensureLock' src/io-engine.js", (out) => check(out.trim(), "0"))
+eval("sed -n '/export function acquireLock/,/^}/p' src/adapters/io-append.js", (out) => {
   check(out.includes("'wx'"))       // create exclusivo: o kernel decide a corrida
   check(out.includes("EEXIST"))     // EEXIST = alguem detem
 })
@@ -36,19 +36,19 @@ eval("sed -n '/export function acquireLock/,/^}/p' io-append.js", (out) => {
 //    janela entre os dois: a varredura acharia arquivo vazio e nao saberia
 //    distinguir recem-nascido de corrompido — roubando um lock vivo ou
 //    travando para sempre. O nome fecha essa janela por construcao.
-eval("grep -c 'process.pid' io-append.js", (out) => check(Number(out.trim()) >= 1))
-eval("grep -c 'process.kill(pid, 0)' io-append.js", (out) => check(out.trim(), "1"))
+eval("grep -c 'process.pid' src/adapters/io-append.js", (out) => check(Number(out.trim()) >= 1))
+eval("grep -c 'process.kill(pid, 0)' src/adapters/io-append.js", (out) => check(out.trim(), "1"))
 
 // 5. A eleicao de genesis por 'wx' em f.yaml SUMIU. O nascimento do dado e o
 //    nascimento do controle eram o mesmo evento, e por isso tinham que ser
 //    disputados juntos; agora sao arquivos separados e o genesis e apenas a
 //    primeira escrita, sob o lock comum.
-eval("grep -c \"openSync(f.yaml, 'wx')\" io-engine.js", (out) => check(out.trim(), "0"))
+eval("grep -c \"openSync(f.yaml, 'wx')\" src/io-engine.js", (out) => check(out.trim(), "0"))
 
 // 6. A publicacao da projecao NAO readquire o lock. Sob a 2.2 ela precisava,
 //    so para o rename final, porque escrever f.yaml com o lock alheio forjaria
 //    um segundo mutex. Esse era o custo que a 2.3 existe para eliminar.
-eval("sed -n '/function publishYaml/,/^  }/p' io-engine.js", (out) => {
+eval("sed -n '/function publishYaml/,/^  }/p' src/io-engine.js", (out) => {
   check(!out.includes("acquireLock"))
   check(out.includes("publishDerived"))
 })
@@ -56,11 +56,11 @@ eval("sed -n '/function publishYaml/,/^  }/p' io-engine.js", (out) => {
 // 7. O timeout voltou a ser CONSTANTE, e a constante e justificada pela medicao
 //    de 2.1/2.2 (secao critica O(1)), nao escolhida a dedo. Um timeout que
 //    cresce com o dado transforma deadlock real em travamento longo.
-eval("grep -n 'export const LOCK_TIMEOUT' io-append.js", (out) => check(out.includes("1000")))
+eval("grep -n 'export const LOCK_TIMEOUT' src/adapters/io-append.js", (out) => check(out.includes("1000")))
 
 // 8. Nenhum .tmp de nome fixo sobrou. Um .tmp compartilhado por todo processo
 //    que escreve a mesma base e o bug da 1.2 voltando por outra porta.
-eval("grep -n \"yaml + '.tmp'\" io-engine.js", (out) => check(out.trim(), ""))
+eval("grep -n \"yaml + '.tmp'\" src/io-engine.js", (out) => check(out.trim(), ""))
 
 // 9. A MEDICAO — 8 processos, 30 escritas cada, ao vivo.
 //

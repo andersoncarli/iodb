@@ -1,6 +1,6 @@
 import { DB } from "./db.js";
 import { node, registerAll } from "./node.js";
-import { TRANSITION, ON } from "../utils/src/bus.js";
+import { TRANSITION, ON } from "../../utils/src/bus.js";
 import { join } from "path";
 
 test("DB DX: Polymorphic constructor and Global Initiation", async ({ check, withTempDir }) => {

@@ -1,4 +1,4 @@
-import { YamlCollection } from './20-yaml.js'
+import { YamlCollection } from './yaml.js'
 import { join } from 'path'
 
 test('YAML Adapter: Basic operations',  async ({check}) => {

@@ -8,30 +8,23 @@
  *   DB('path/')      → same as DB('io', { path })
  */
 
-import { readdirSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync } from 'fs'
 import { join, dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import IO, { merge, append, assign } from './io-engine.js'
-import { TRANSITION, ON } from '../utils/src/bus.js'
+import { TRANSITION, ON } from '../../utils/src/bus.js'
 import { findProjectRoot } from './find-root.js'
-import { NodeAdapter } from './60-node.js'
+import { ADAPTERS, sqlite, NodeAdapter } from './adapters/index.js'
 
  let _globalDB = null
  export function getGlobalDB() { return _globalDB }
 
  const __dirname = dirname(fileURLToPath(import.meta.url))
- const ADAPTERS_PATH = __dirname
 
  const BACKENDS = {}
  const EXT_MAP = {}
 
- const entries = readdirSync(ADAPTERS_PATH)
-   .filter(f => f.endsWith('.js') && !f.endsWith('.t.js') && f.match(/^\d+-/))
-   .sort((a, b) => parseInt(a) - parseInt(b))
-
- for (const entry of entries) {
-   const handle = entry.match(/^\d+-(.+)\.js$/)[1]
-   const module = await import(`./${entry}`)
+ for (const { handle, module } of ADAPTERS) {
    const capitalized = handle[0].toUpperCase() + handle.slice(1)
    const factory = module[`${capitalized}Collection`]
      ?? module[`${capitalized}Factory`]
@@ -45,7 +38,7 @@ import { NodeAdapter } from './60-node.js'
      }
    }
  }
-BACKENDS['sqlite'] = (await import('./50-sqlite.js')).default
+BACKENDS['sqlite'] = sqlite.default
 BACKENDS['stream'] = (filePath, opts) => IO(filePath, { reduce: append, initial: [] })
 
 // ── IO Type Reducers ──────────────────────────────────────────────────────────
