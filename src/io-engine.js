@@ -474,7 +474,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       provisional = computeKeys(_log, prevKey)
       newProjection = provisional.reduce(
         (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }),
-        paged ? materialize(projection) : { ...projection }
+        _projCopy()
       )
       allBytes = Buffer.from(provisional.map(p => p.line).join(''))
       if (t) t.recomputeEnd = Date.now()

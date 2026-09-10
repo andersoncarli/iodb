@@ -46,10 +46,13 @@ test('pagedtext: header is versioned and page 0', async ({ check, withTempDir })
     const raw = readFileSync(file)
     const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
     check(header.magic, 'PAGEDTEXT')
-    check(header.version, 2)
+    check(header.version, 3)
     check(header.pageSize, PS)
-    check(Array.isArray(header.pages), true)
-    check(header.pages[0], 3)
+    // O header e o GENESIS do arquivo: so o que nunca muda. Contagem de linhas,
+    // extents e chaves sao estatistica derivada e vivem no trailer, no fim —
+    // e por isso que apender nao reescreve o header.
+    check(header.pages, 'undefined')
+    check(header.kind, 'text')
   })
 })
 
@@ -67,10 +70,11 @@ test('pagedtext: every page offset is 4096-aligned', async ({ check, withTempDir
     check(info.every(p => p.aligned), true)
     check(info.every(p => p.offset % PS === 0), true)
 
-    // File size is header + N full pages (last page also padded to PS).
+    // Tamanho = header de genesis + N paginas de dados + o trailer, todos
+    // alinhados. O invariante que importa e o arquivo ser multiplo exato de PS.
     const size = statSync(file).size
     check(size % PS === 0, true)
-    check(size, PS * (1 + info.length))
+    check(size >= PS * (1 + info.length), true)
   })
 })
 
@@ -205,5 +209,71 @@ test('pagedtext: legacy plain-text file migrates on open', async ({ check, withT
     const raw = readFileSync(file)
     const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
     check(header.magic, 'PAGEDTEXT')
+  })
+})
+
+test('pagedtext: unknown header version is discarded, not reinterpreted as text', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'future.txt')
+    // A file written by a LATER version: valid magic, version we cannot read.
+    const body = JSON.stringify({ magic: 'PAGEDTEXT', version: 99, pageSize: PS, pages: [2] })
+    const buf = Buffer.alloc(PS * 2)
+    buf.write(body, 0, 'utf8')
+    buf.write('some future encoding\n', PS, 'utf8')
+    writeFileSync(file, buf)
+    const before = readFileSync(file)
+
+    const t = PagedText({ path: file, pageSize: PS })
+    // Presented as empty and flagged for rebuild — NOT parsed as legacy text.
+    check(t._store.needsRebuild, true)
+    check(t.length, 0)
+    // And, above all, not rewritten: reinterpreting it would destroy it.
+    check(readFileSync(file).equals(before), true)
+    t.close()
+  })
+})
+
+test('pagedtext: the page cache has a ceiling under a full scan', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'wide.txt')
+    const lines = []
+    for (let i = 0; i < 400; i++)
+      for (let j = 0; j < 50; j++) lines.push(`p${i} l${j} ` + 'x'.repeat(60))
+    const t = PagedText({ path: file, pageSize: PS, cachePages: 8 })
+    t._store.replaceAll(lines)
+    t._store.flush()
+    t.close()
+
+    const re = PagedText({ path: file, pageSize: PS, cachePages: 8 })
+    check(re._store.pageCount() > 100, true)
+    re.indexOf('nothing matches this')      // a full scan of every page
+    // The whole file was read; the RAM ceiling held.
+    check(re._store.cacheSize <= 8, true)
+    re.close()
+  })
+})
+
+test('pagedtext: checkpoint trailer — appends since the last one are recovered', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'ckpt.txt')
+    // checkpointEvery: 50 — o trailer fica deliberadamente atrasado, e as
+    // paginas escritas depois dele tem que ser reencontradas na abertura.
+    const t = PagedText({ path: file, pageSize: PS, checkpointEvery: 50 })
+    const seed = []
+    for (let i = 0; i < 300; i++) seed.push(`linha ${i} ` + 'y'.repeat(60))
+    t._store.replaceAll(seed)
+    t._store.flush()
+    for (let i = 0; i < 37; i++) t.push(`extra ${i} ` + 'z'.repeat(60))
+    const wrote = t._store.lastWrite
+    t.close()
+
+    // O ultimo append nao gravou trailer: so a pagina de dados.
+    check(wrote.checkpoint, false)
+
+    const re = PagedText({ path: file, pageSize: PS })
+    check(re.length, 337)
+    check(re.at(-1), `extra 36 ${'z'.repeat(60)}`)
+    check(re[0], `linha 0 ${'y'.repeat(60)}`)
+    re.close()
   })
 })

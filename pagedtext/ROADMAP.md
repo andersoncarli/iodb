@@ -27,10 +27,10 @@ Done:
 
 No global index is required initially.
 
-**Not done — the cache has no ceiling.** `:160` is a plain `Map` with no eviction, so any
-full scan (`allLines`, `:244-248`, reachable from `.text`, `.slice`, `.map`, `.indexOf`)
-materializes the whole file in memory. That is the very RAM ceiling paging exists to
-remove.
+**The cache ceiling was added in sprint 015.** It used to be a plain `Map` with no
+eviction, so any full scan (reachable from `.text`, `.slice`, `.map`, `.indexOf`)
+materialized the whole file in memory — the very RAM ceiling paging exists to remove.
+Eviction now respects dirty pages, and `cachePages` sets the bound.
 
 ## Phase 1.5 — Positional commit
 
@@ -38,26 +38,46 @@ Split out of Phase 3 because that is where the work actually sits: calling it "P
 hid it behind the Planner, and **O(dirty pages) does not need the full Planner** — it
 needs page-local mutation plus a dirty set.
 
-**Not done. This is the gap.**
+**Done — sprint 015, iodb feature 2.0.** One data page per append, at any file size.
+Measured on the case the docs call fundamental (append-only CSV, 900ms time fence):
+**1.01 pages/append at 0.3MB, 1.01 at 3MB, 1.02 at 12.3MB** — a 39x larger file costs
+1.01x per append.
 
-- `flush()` (`:281-298`) reads and re-renders **every** page and calls `atomicReplace()`
-  — a full rewrite. The header comment at `:18` claims "written with a positioned
-  writeSync, so only the dirty page pays". It does not.
-- The `dirty` flag is written at `:205`, `:228`, `:275` and cleared at `:297`, and
-  **never read in a decision position**.
-- `ftruncateSync` is imported at `:2` and never called.
-- Every mutating array op (`push`/`pop`/`splice`/index set) calls `allLines()` +
-  `replaceAll()` (`:452-481`, `:515-523`) — each single mutation rewrites the whole file.
+**The header is the file's genesis and is not rewritten.** It carries only what never
+changes once the file exists: magic, version, pageSize, layout, kind. The per-page
+statistics — line counts, extents, split keys, logOffset — have one entry per page, so
+keeping them in the header made it grow with the file and be rewritten whole on every
+commit (55 pages per append at 12MB). They now live in a **trailer** at the end, where
+growing only moves forward and displaces no data page.
 
-Prerequisite: **every data page must occupy exactly `pageSize`**. Today `renderPage`
-(`:93-110`) returns a short buffer for an oversized line, so a page offset is not
-computable and positional writing is incorrect. An oversized line must occupy k
-contiguous pages, declared in the header.
+The trailer has two regimes and neither is a source of truth: **volatile** (default,
+rebuilt on every flush) or **checkpoint** (`checkpointEvery: N`, written every N flushes —
+between them an append writes one data page and nothing else). That is safe because pages
+are self-describing: alignment says where each one starts and filling says where its
+content ends, so whatever a checkpoint leaves behind is rebuilt on open by reading the
+pages.
+
+- `flush()` walks only the dirty set and writes each page with a positioned `writeSync`,
+  plus the header, which is always rewritten because it is the arbiter.
+- The `dirty` flag stopped being decorative: a dirty set now governs what gets written.
+- `ftruncateSync` is called when the file shrinks.
+- Every mutating array op is page-local: it locates the page and rewrites only it,
+  repaging the tail only when a page overflows.
+
+**Durability is fsync on the same fd, not temp+rename.** Rewriting the file into a temp
+copy in order to rename it is precisely the cost this phase removes. A torn page is
+recovered by rebuilding from the consumer's source of truth — the doctrine already applied
+to a corrupt page.
+
+**The prerequisite, also done: the alignment invariant.** Every data page occupies an
+exact multiple of `pageSize`, and a line longer than a page occupies k contiguous pages
+with k recorded in `extents[]`. Previously `renderPage` returned a short buffer for an
+oversized line, which left every later page offset undefined.
+
+Still open, and deliberately so — these are optimization, not correction:
 
 - sparse ChangeSet
-- region selection
-- local repagination
-- write only planned regions
+- greedy region expansion
 
 ## Phase 2 — Planner
 
@@ -71,16 +91,24 @@ optimization, not correction:
 
 ## Phase 3 — Commit
 
-**Done — the atomicity half:**
+**Done — the incremental half**, in Phase 1.5. "Copy unchanged regions / write planned
+regions" is what positional commit means, and it landed there.
 
-- fsync — `atomicReplace` `:136-150`
-- atomic rename — `:148`
-- temp-file naming with PID + random — `:137`
+**Superseded — the atomicity half.** The store used to commit through temp + fsync +
+atomic rename (`atomicReplace`). That is still how the cursor state file is written, but
+the store itself no longer uses it: rename requires materializing the whole file, which
+defeats O(dirty pages). Durability is now fsync on the same fd after the positioned
+writes.
 
-**Not done — the incremental half.** "Copy unchanged regions / write planned regions"
-moved to Phase 1.5, which is where the work belongs.
+The trade this makes, stated plainly: a crash mid-commit can leave a torn page, where
+rename could not. That is the doctrine this project already applies — a corrupt page is
+discarded and rebuilt from the consumer's source of truth, never repaired in place. What
+is still open is making that detectable rather than silent:
 
+- per-page generation counter, so a reader can tell a page moved under it
 - recovery/temporary-file handling
+
+Both are tracked as iodb front 4 (see Phase 6).
 
 ## Phase 4 — Kinds
 

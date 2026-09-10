@@ -418,8 +418,21 @@ if (globalThis.test) {
       const big = measureOpen(join(dir), 8000, true)
       check(small.hit, true)
       check(big.hit, true)
-      // paged open() should be sub-linear in store size: 8x the records must
-      // not cost 8x the open time. Generous factor to stay non-flaky.
+      // ESTA ASSERCAO ESTA VERMELHA DE PROPOSITO E NAO E A 2.0 QUE A CONSERTA.
+      //
+      // Ela pressupoe que paginar a PROJECAO torna o open() sub-linear. Medido
+      // na feature 2.0, isso e falso — e falso pelo mesmo numero nos DOIS
+      // caminhos: 1k -> 8k custa 14.8ms -> 152.9ms no plano e 9.0ms -> 144.2ms
+      // no paginado. Paginar a projecao nao mexe nisso porque nao e a projecao
+      // que custa: o open() rele o .dash inteiro e reconstroi a cadeia de
+      // chaves com um makeFullKey (um SHA) POR REGISTRO, em io-engine.js:290.
+      // Esse replay e do indice e do bitmap, roda identico com pageSize 0, e e
+      // linear por construcao.
+      //
+      // O que tornaria o open() sub-linear e o marcador de offset no header
+      // (logOffset) permitindo retomar o replay onde o derivado parou — isto e,
+      // a 2.4, e nao esta nesta feature. Ate la o numero fica visivel em vez de
+      // escondido atras de um fator generoso.
       check(big.openMs < small.openMs * 5 + 50, true)
     } finally {
       rmSync(dir, { recursive: true, force: true })

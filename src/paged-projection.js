@@ -17,28 +17,21 @@
  * Persistence is synchronous (openSync/readSync/writeSync/fsyncSync) so it can
  * run inside the engine's lock critical section without reopening it.
  *
- * Page format (data pages, after the header page):
- *   keyed line       <key>\t<JSON.stringify(value)>\n
- *   sequential line  <JSON.stringify(value)>\n
- *   then filling to the 4096 boundary (spaces). The header's per-page line
- *   count is the authority on where content ends — trailing spaces an editor
- *   might trim are not load-bearing.
+ * Since feature 2.0 this module owns NO storage. It is a CODEC plus a key
+ * index plus the engine's Proxy face, over a PagedText store — the project's
+ * single paged-storage primitive. It no longer opens an fd, computes an offset,
+ * pads a page or renames a file; PagedText does that, and does it by writing
+ * only the pages that actually changed.
  *
- * Header page (page 0), a single JSON object padded to pageSize:
- *   { magic:"PAGEDPROJ", version:1, pageSize, layout, keys:[...], pages:[n,...] }
- *   keys[]  — for keyed layout, the first key of each data page (the split
- *             points); empty for sequential.
- *   pages[] — line count per data page.
+ * What stays here is what is genuinely about projections:
+ *   - the codec: "<key>\t<json>" for keyed, bare "<json>" for sequential;
+ *   - the key index (splitKeys) and the binary search over it;
+ *   - tombstone semantics and the pending change-set;
+ *   - the Proxy the engine consumes.
  */
 
-import {
-  openSync, closeSync, readSync, writeSync, fsyncSync,
-  fstatSync, existsSync, mkdirSync, renameSync, writeFileSync
-} from 'fs'
-import { dirname } from 'path'
+import { PagedText } from '../pagedtext/pagedtext.js'
 
-const MAGIC = 'PAGEDPROJ'
-const VERSION = 1
 const PAGE_SIZE = 4096
 const CACHE_PAGES = 64          // ~256KB resident ceiling for value pages
 
@@ -58,25 +51,20 @@ function decodeSeq(line) {
   try { return JSON.parse(line) } catch { return null }
 }
 
-function padTo(str, size) {
-  const len = Buffer.byteLength(str)
-  if (len > size) return null
-  return str + ' '.repeat(size - len)
-}
+
 
 /**
- * Pack sorted "key\tjson" (or bare "json") lines into pages ≤ pageSize bytes.
- * A single line longer than a page gets its own page.
+ * Pack lines into pages of at most `pageSize` bytes. A line longer than a page
+ * gets its own page. This mirrors what the store does internally; the codec
+ * needs it to know which pages a new content WOULD occupy before writing.
  */
 function packLines(lines, pageSize) {
   const pages = []
   let cur = []
   let bytes = 0
   for (const line of lines) {
-    const n = Buffer.byteLength(line)
-    if (cur.length && bytes + n > pageSize) {
-      pages.push(cur); cur = []; bytes = 0
-    }
+    const n = Buffer.byteLength(line) + 1
+    if (cur.length && bytes + n > pageSize) { pages.push(cur); cur = []; bytes = 0 }
     cur.push(line)
     bytes += n
   }
@@ -86,105 +74,42 @@ function packLines(lines, pageSize) {
 
 export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, initial } = {}) {
   const isSeq = layout === 'sequential'
-  let fd = null
-  let pageCounts = []            // line count per data page
-  let splitKeys = []             // first key of each data page (keyed only)
-  const cache = new Map()        // pageIndex -> { entries, dirty }  (LRU by insertion)
-  let dirtyHeader = false
 
-  // ---- file / header -------------------------------------------------------
+  // The storage primitive. Everything physical — header, offsets, page cache
+  // with a ceiling, the dirty set and the positional commit — belongs to it.
+  const store = PagedText(file, {
+    pageSize, layout, kind: 'text', cachePages: CACHE_PAGES
+  })._store
 
-  function ensureFile() {
-    mkdirSync(dirname(file), { recursive: true })
-    if (!existsSync(file)) {
-      writeFileSync(file, headerBuffer())
-    }
-  }
-  function openFd() { if (fd == null) fd = openSync(file, 'r+') }
-  function closeFd() { if (fd != null) { closeSync(fd); fd = null } }
+  // splitKeys travels in the shared header, but its MEANING is codec-local:
+  // storage has no idea what a key is.
+  let splitKeys = store.keys || []
 
-  function headerBuffer() {
-    const body = JSON.stringify({
-      magic: MAGIC, version: VERSION, pageSize, layout,
-      keys: splitKeys, pages: pageCounts
-    })
-    const buf = Buffer.alloc(pageSize)
-    buf.write(body, 0, 'utf8')
-    return buf
-  }
+  function pageCount() { return store.pageCount() }
 
-  function loadHeader() {
-    openFd()
-    const st = fstatSync(fd)
-    if (st.size >= pageSize) {
-      const buf = Buffer.alloc(pageSize)
-      readSync(fd, buf, 0, pageSize, 0)
-      const nul = buf.indexOf(0)
-      const text = buf.toString('utf8', 0, nul === -1 ? buf.length : nul).trim()
-      try {
-        const h = JSON.parse(text)
-        if (h.magic === MAGIC && h.version === VERSION) {
-          pageCounts = h.pages || []
-          splitKeys = h.keys || []
-          return
-        }
-      } catch { /* fall through to fresh */ }
-    }
-    pageCounts = []
-    splitKeys = []
-  }
-
-  function pageOffset(i) { return pageSize + i * pageSize }
-
-  // ---- page cache --------------------------------------------------------
-
-  function evictIfNeeded() {
-    while (cache.size > CACHE_PAGES) {
-      // oldest non-dirty entry
-      let victim = null
-      for (const [k, v] of cache) { if (!v.dirty) { victim = k; break } }
-      if (victim == null) break        // everything dirty; keep until flush
-      cache.delete(victim)
-    }
-  }
-
-  function readPage(i) {
-    if (cache.has(i)) return cache.get(i)
-    if (i < 0 || i >= pageCounts.length) return null
-    openFd()
-    const st = fstatSync(fd)
-    const dataBytes = st.size - pageSize
-    const len = i < pageCounts.length - 1
-      ? pageSize
-      : Math.max(0, dataBytes - i * pageSize)
-    const buf = Buffer.alloc(len)
-    readSync(fd, buf, 0, len, pageOffset(i))
-    const raw = buf.toString('utf8').split('\n')
+  /** Decode one data page into projection entries. The store hands back logical
+   *  lines; this turns them into [key, value] pairs (or bare values). */
+  function pageEntries(i) {
+    const lines = store.readPage(i)
+    if (!lines) return []
     const entries = []
-    let seen = 0
-    for (const line of raw) {
-      if (seen >= pageCounts[i]) break
-      if (line === '' || line === ' ' || /^ +$/.test(line)) continue
+    for (const line of lines) {
+      if (line === '' || /^ +$/.test(line)) continue
       if (isSeq) {
-        const v = decodeSeq(line)
-        entries.push(v)
+        entries.push(decodeSeq(line))
       } else {
         const kv = decodeKeyed(line)
         if (kv) entries.push(kv)
       }
-      seen++
     }
-    const entry = { entries, dirty: false }
-    cache.set(i, entry)
-    evictIfNeeded()
-    return entry
+    return entries
   }
 
   // ---- keyed lookup ------------------------------------------------------
 
   /** page index whose range covers `key` (keyed layout). */
   function pageForKey(key) {
-    if (pageCounts.length === 0) return -1
+    if (pageCount() === 0) return -1
     // splitKeys[i] is the first key on page i; find last i with splitKeys[i] <= key
     let lo = 0, hi = splitKeys.length - 1, ans = 0
     while (lo <= hi) {
@@ -198,7 +123,7 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
   function getKeyed(key) {
     const pi = pageForKey(key)
     if (pi < 0) return undefined
-    const { entries } = readPage(pi)
+    const entries = pageEntries(pi)
     for (const [k, v] of entries) if (k === key) return v
     return undefined
   }
@@ -206,7 +131,7 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
   function hasKeyed(key) {
     const pi = pageForKey(key)
     if (pi < 0) return false
-    const { entries } = readPage(pi)
+    const entries = pageEntries(pi)
     return entries.some(([k]) => k === key)
   }
 
@@ -225,8 +150,8 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
    *  ownKeys / stringify only. */
   function allKeyed() {
     const merged = new Map()
-    for (let i = 0; i < pageCounts.length; i++) {
-      for (const [k, v] of readPage(i).entries) merged.set(k, v)
+    for (let i = 0; i < pageCount(); i++) {
+      for (const [k, v] of pageEntries(i)) merged.set(k, v)
     }
     for (const [k, v] of pending) {
       if (v === DELETED) merged.delete(k)
@@ -237,70 +162,85 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
 
   function allSeq() {
     const out = []
-    for (let i = 0; i < pageCounts.length; i++) out.push(...readPage(i).entries)
+    for (let i = 0; i < pageCount(); i++) out.push(...pageEntries(i))
     out.push(...seqPending)
     return out
   }
 
   // ---- flush -----------------------------------------------------------
 
+  /**
+   * Hand the store a new logical content, but touch only the pages that changed.
+   *
+   * The pages are compared position by position. An edit that does not change
+   * the page count leaves every untouched page clean, so the store writes just
+   * the ones that moved. When the count changes (a page split or merged), every
+   * page from that point on genuinely shifts and is rewritten — which is the
+   * honest cost, not a regression.
+   */
+  function replacePagesDiffed(logical) {
+    const wanted = logical.length ? packLines(logical, pageSize) : []
+    const have = store.pageCount()
+
+    if (wanted.length !== have) { store.replaceAll(logical); return }
+
+    for (let i = 0; i < wanted.length; i++) {
+      const current = store.readPage(i)
+      const next = wanted[i]
+      if (current.length === next.length && current.every((l, j) => l === next[j])) continue
+      store.writePage(i, next)
+    }
+  }
+
+  /**
+   * Commit the pending change-set.
+   *
+   * The re-render of the LINES walks the whole logical content, and it has to:
+   * a keyed projection is sorted, so inserting one key can shift every later
+   * one across page boundaries. That part is O(store) by nature.
+   *
+   * What must NOT be O(store) is the WRITE. `replaceAll` would mark every page
+   * dirty and hand the store a full rewrite, which throws away exactly what
+   * feature 2.0 bought — measured, that made cost per write grow 15.7x as the
+   * file grew 13.5x. So the new page contents are diffed against what is
+   * already on disk, and only the pages that actually differ are handed over.
+   * The store then writes those, plus the header.
+   */
   function flushPages() {
-    openFd()
     let lines
     if (isSeq) {
-      const values = allSeq()
-      lines = values.map(encodeSeq)
+      lines = allSeq().map(encodeSeq)
     } else {
       const merged = allKeyed()
-      const keys = [...merged.keys()].sort()
-      lines = keys.map(k => encodeKeyed(k, merged.get(k)))
+      lines = [...merged.keys()].sort().map(k => encodeKeyed(k, merged.get(k)))
     }
+    // The codec's lines carry their own trailing newline; the store's logical
+    // unit is a line WITHOUT one.
+    const logical = lines.map(l => l.replace(/\n$/, ''))
 
-    const pages = packLines(lines, pageSize)
-    pageCounts = pages.map(p => p.length)
-    splitKeys = isSeq ? [] : pages.map(p => {
-      const first = p[0]
+    replacePagesDiffed(logical)
+
+    // Recompute the split keys from what the store actually paged, then hand
+    // them to the header. Storage carries them; only this module reads them.
+    splitKeys = isSeq ? [] : Array.from({ length: store.pageCount() }, (_, i) => {
+      const first = store.readPage(i)?.[0] ?? ''
       const tab = first.indexOf('\t')
-      return tab === -1 ? first.replace(/\n$/, '') : first.slice(0, tab)
+      return tab === -1 ? first : first.slice(0, tab)
     })
+    store.keys = splitKeys
+    store.flush()
 
-    // atomic rewrite: header + every page padded to pageSize
-    const tmp = `${file}.${process.pid}.tmp`
-    const tfd = openSync(tmp, 'w')
-    try {
-      writeSync(tfd, headerBuffer(), 0, pageSize, 0)
-      let pos = pageSize
-      for (const p of pages) {
-        const body = p.join('')
-        const padded = padTo(body, pageSize) ?? body   // oversized line: no pad
-        const b = Buffer.from(padded, 'utf8')
-        writeSync(tfd, b, 0, b.length, pos)
-        pos += b.length < pageSize ? b.length : pageSize
-        // if a page overflowed pageSize (huge single value), advance by its size
-        if (b.length > pageSize) pos = pageSize + Math.ceil((pos - pageSize) / 1) // keep sequential
-      }
-      fsyncSync(tfd)
-    } finally {
-      closeSync(tfd)
-    }
-    renameSync(tmp, file)
-    closeFd()
-    cache.clear()
     pending.clear()
     seqPending.length = 0
-    dirtyHeader = false
   }
 
   // ---- lifecycle -----------------------------------------------------
 
-  ensureFile()
-  loadHeader()
-
   // Seed from `initial` if the file is empty and initial has content.
-  if (pageCounts.length === 0 && initial && !isSeq && Object.keys(initial).length) {
+  if (pageCount() === 0 && initial && !isSeq && Object.keys(initial).length) {
     for (const [k, v] of Object.entries(initial)) pending.set(k, v)
     flushPages()
-  } else if (pageCounts.length === 0 && initial && isSeq && Array.isArray(initial) && initial.length) {
+  } else if (pageCount() === 0 && initial && isSeq && Array.isArray(initial) && initial.length) {
     seqPending.push(...initial)
     flushPages()
   }
@@ -319,7 +259,7 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
       if (prop === '__allEntries') return () => isSeq ? allSeq() : allKeyed()
       if (prop === 'length' && isSeq) {
         let n = seqPending.length
-        for (const c of pageCounts) n += c
+        for (let i = 0; i < pageCount(); i++) n += store.readPage(i).length
         return n
       }
       if (isSeq && typeof prop === 'string' && /^\d+$/.test(prop)) {
@@ -344,9 +284,8 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
         all[Number(prop)] = value
         seqPending.length = 0
         // rebuild pending as full replacement
-        pageCounts = []
         splitKeys = []
-        cache.clear()
+        store.replaceAll([])
         seqPending.push(...all)
         return true
       }

@@ -1,8 +1,22 @@
 import IO, { merge, append, assign } from './io-engine.js'
+import { readTrailer } from '../pagedtext/pagedtext.js'
 import { statSync, readFileSync } from 'fs'
 import { join } from 'path'
 
 const PS = 4096
+
+// Os tres testes que escrevem em volume levam { timeout: 5000 }. Desde que o
+// batching saiu (feature 2.0) cada registro faz um commit REAL, com fsync, e
+// centenas deles nao cabem no default de 1000ms.
+//
+// O teto acompanha trabalho real, nao mascara crescimento. O custo por registro
+// e PLANO — 100 registros: 1.10ms/rec, 200: 1.00, 400: 0.96 — que e exatamente a
+// propriedade O(paginas sujas): o custo de uma escrita nao cresce com o tamanho
+// do store. Se ele voltar a crescer, o teto estoura e o teste acusa.
+//
+// O preco disso e que este arquivo saiu de ~1s para ~8s. E deliberado: o caminho
+// que o engine usa de verdade e uma escrita por registro, e era ele que ficava
+// sem cobertura enquanto os testes batchavam para contornar a reescrita total.
 
 test('io-engine paged: kv round-trips like the plain path', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
@@ -30,10 +44,11 @@ test('io-engine paged: matches the plain path key-for-key', async ({ check, with
       const base = join(dir, label)
       const io = IO(base, { reduce: merge, initial: {}, pageSize })
       io.open()
-      // batched: one flush for the whole seed, not one per record — the paged
-      // flush is a full-file rewrite, so per-record here is O(n^2).
-      for (let i = 0; i < 180; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 }, { flush: 0 })
-      io.flush()
+      // NOT batched. Before feature 2.0 the paged flush was a full-file
+      // rewrite, so one flush per record was O(n^2) and these tests had to
+      // batch around it. The commit is now O(dirty pages), so the per-record
+      // path is the one worth exercising.
+      for (let i = 0; i < 180; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 })
       io.in({ k100: null })          // tombstone
       io.close()
 
@@ -49,15 +64,14 @@ test('io-engine paged: matches the plain path key-for-key', async ({ check, with
     check(runs.paged.k000, 0)
     check(runs.paged.k179, 358)
   })
-})
+}, { timeout: 5000 })
 
 test('io-engine paged: append preserves order and application semantics', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const base = join(dir, 'log')
     const io = IO(base, { reduce: append, initial: [], pageSize: 4096 })
     io.open()
-    for (let i = 0; i < 200; i++) io.in({ seq: i }, { flush: 0 })
-    io.flush()
+    for (let i = 0; i < 200; i++) io.in({ seq: i })
     io.close()
 
     const re = IO(base, { reduce: append, initial: [], pageSize: 4096 })
@@ -74,25 +88,25 @@ test('io-engine paged: append preserves order and application semantics', async 
     check(seqs[199], 199)
     check(seqs.every((v, i) => v === i), true)   // application order preserved
   })
-})
+}, { timeout: 5000 })
 
 test('io-engine paged: .proj file is 4096-aligned', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const base = join(dir, 'store')
     const io = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
     io.open()
-    for (let i = 0; i < 400; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } }, { flush: 0 })
-    io.flush()
+    for (let i = 0; i < 400; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } })
     io.close()
 
     const size = statSync(base + '.proj').size
     check(size % PS === 0, true)
     const raw = readFileSync(base + '.proj')
     const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
-    check(header.magic, 'PAGEDPROJ')
-    check(header.pages.length > 1, true)         // genuinely multi-page
+    check(header.magic, 'PAGEDTEXT')
+    // O header e genesis; a contagem de paginas esta no rodape.
+    check(readTrailer(base + '.proj').pages.length > 1, true)   // genuinely multi-page
   })
-})
+}, { timeout: 5000 })
 
 test('io-engine paged: .yaml still readable and correct', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
