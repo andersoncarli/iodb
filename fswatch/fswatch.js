@@ -1,8 +1,9 @@
-import { Database } from 'bun:sqlite'
-import { readFile, stat, lstat, readdir } from 'node:fs/promises'
+import { readFile, stat, lstat, readdir, mkdir } from 'node:fs/promises'
 import { watch as nodeWatch } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { Database } from 'bun:sqlite'
+import IO, { merge } from '../src/io-engine.js'
 
 const HOME = os.homedir()
 const SEP = path.sep
@@ -116,55 +117,89 @@ const normalizeConfig = raw => {
   return { clusters }
 }
 
-const MetadataStore = filename => {
-  const db = new Database(filename)
+// The metadata baseline is an iodb store keyed by `dev:ino`. The engine's `merge`
+// reducer gives upsert and, through a null value, the tombstone that stands in for
+// DELETE. There is no nodes/leaves split: that separation existed for SQL typing and
+// per-table indexes, and `kind` is already a field on every entry (see feature 6.4).
+const MetadataStore = base => {
+  const io = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
+  io.open()
+
+  // `merge` is SHALLOW: for an object value it spreads over what is already there
+  // rather than replacing it. SQLite deleted the row from the other table before
+  // upserting, so a dir landing on a file of the same (dev,ino) started clean. Here
+  // nothing is deleted, so every field must be written explicitly on every put —
+  // otherwise `size` and `hash` survive a file->dir flip. `null` in `merge` removes
+  // the field, which is what the SQL `all()` already synthesised for dirs.
+  const normalize = e => ({
+    id: e.id, parent: e.parent ?? null, name: e.name, kind: e.kind,
+    dev: e.dev, ino: e.ino, mode: e.mode, mtime: e.mtime, ctime: e.ctime,
+    size: e.kind === 'dir' ? null : (e.size ?? null),
+    hash: e.hash ?? null,
+    ...(e.path ? { path: e.path } : {})
+  })
+
+  const put = (e, { flush = true } = {}) => {
+    const row = normalize(e)
+    mirror.set(e.id, row)
+    return io.in({ [e.id]: row }, { flush })
+  }
+  const remove = (id, { flush = true } = {}) => {
+    mirror.delete(id)
+    return io.in({ [id]: null }, { flush })
+  }
+  const flush = () => io.flush()
+  // Reading the live paged projection by key returns undefined for every key, even
+  // though Object.keys lists it (iodb defect, see sprint 017 report). Values are
+  // durable and a reopened store reads them back fine, so the baseline is kept in a
+  // process-local mirror and the store stays the durable copy. Drop the mirror once
+  // the engine serves live reads.
+  const mirror = new Map()
+  // open() replays the log, so what it produced is readable HERE, at construction,
+  // before the live-read defect applies to subsequent writes.
+  for (const [k, v] of Object.entries(io.get('#1') ?? {}))
+    if (/^\d+:\d+$/.test(k) && v && typeof v === 'object') mirror.set(k, v)
+  const all = () => [...mirror.values()]
+
+  const close = () => io.close()
+  return { io, put, remove, flush, all, close, path: () => io.path() }
+}
+
+// The SQLite backend, kept as a peer of the iodb one and shaped to the SAME
+// interface: put/remove/flush/all/close. It is one table, not the old nodes/leaves
+// split — that separation was SQL bookkeeping and `kind` already carries the
+// distinction (feature 6.4). `flush` is a no-op here because every write is already
+// durable; the method exists so callers never branch on the backend.
+const SqliteStore = base => {
+  const file = base.endsWith('.sqlite') ? base : `${base}.sqlite`
+  const db = new Database(file)
   db.exec(`
     PRAGMA journal_mode=WAL;
-    CREATE TABLE IF NOT EXISTS nodes(
-      id TEXT PRIMARY KEY, parent TEXT, name TEXT NOT NULL, kind TEXT NOT NULL,
-      dev INTEGER NOT NULL, ino INTEGER NOT NULL, mode INTEGER, mtime INTEGER, ctime INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS leaves(
+    CREATE TABLE IF NOT EXISTS entries(
       id TEXT PRIMARY KEY, parent TEXT, name TEXT NOT NULL, kind TEXT NOT NULL,
       dev INTEGER NOT NULL, ino INTEGER NOT NULL, size INTEGER, mode INTEGER,
-      mtime INTEGER, ctime INTEGER, hash TEXT
+      mtime INTEGER, ctime INTEGER, hash TEXT, path TEXT
     );
-    CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent);
-    CREATE INDEX IF NOT EXISTS leaves_parent ON leaves(parent);
-    CREATE INDEX IF NOT EXISTS leaves_inode ON leaves(dev,ino);
+    CREATE INDEX IF NOT EXISTS entries_parent ON entries(parent);
+    CREATE INDEX IF NOT EXISTS entries_kind ON entries(kind);
   `)
-
-  const put = e => {
-    const table = e.kind === 'dir' ? 'nodes' : 'leaves'
-    const other = table === 'nodes' ? 'leaves' : 'nodes'
-    db.query(`DELETE FROM ${other} WHERE id=?`).run(e.id)
-    if (table === 'nodes') db.query(`
-      INSERT INTO nodes(id,parent,name,kind,dev,ino,mode,mtime,ctime)
-      VALUES(?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET parent=excluded.parent,name=excluded.name,
-      kind=excluded.kind,dev=excluded.dev,ino=excluded.ino,mode=excluded.mode,
-      mtime=excluded.mtime,ctime=excluded.ctime
-    `).run(e.id,e.parent,e.name,e.kind,e.dev,e.ino,e.mode,e.mtime,e.ctime)
-    else db.query(`
-      INSERT INTO leaves(id,parent,name,kind,dev,ino,size,mode,mtime,ctime,hash)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET parent=excluded.parent,name=excluded.name,
-      kind=excluded.kind,dev=excluded.dev,ino=excluded.ino,size=excluded.size,
-      mode=excluded.mode,mtime=excluded.mtime,ctime=excluded.ctime,hash=excluded.hash
-    `).run(e.id,e.parent,e.name,e.kind,e.dev,e.ino,e.size,e.mode,e.mtime,e.ctime,e.hash ?? null)
-  }
-
-  const remove = id => {
-    db.query('DELETE FROM nodes WHERE id=?').run(id)
-    db.query('DELETE FROM leaves WHERE id=?').run(id)
-  }
-  const all = () => [
-    ...db.query('SELECT id,parent,name,kind,dev,ino,mode,mtime,ctime,NULL size,NULL hash FROM nodes').all(),
-    ...db.query('SELECT id,parent,name,kind,dev,ino,size,mode,mtime,ctime,hash FROM leaves').all()
-  ]
-  const close = () => db.close()
-  return { db, put, remove, all, close }
+  const upsert = db.query(`
+    INSERT INTO entries(id,parent,name,kind,dev,ino,size,mode,mtime,ctime,hash,path)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET parent=excluded.parent,name=excluded.name,
+    kind=excluded.kind,dev=excluded.dev,ino=excluded.ino,size=excluded.size,
+    mode=excluded.mode,mtime=excluded.mtime,ctime=excluded.ctime,hash=excluded.hash,
+    path=excluded.path
+  `)
+  const put = e => upsert.run(e.id, e.parent ?? null, e.name, e.kind, e.dev, e.ino,
+    e.kind === 'dir' ? null : (e.size ?? null), e.mode, e.mtime, e.ctime,
+    e.hash ?? null, e.path ?? null)
+  const remove = id => db.query('DELETE FROM entries WHERE id=?').run(id)
+  const all = () => db.query('SELECT * FROM entries').all()
+  return { db, put, remove, flush: () => {}, all, close: () => db.close(), path: () => file }
 }
+
+const BACKENDS = { iodb: MetadataStore, sqlite: SqliteStore }
 
 const describe = async (filename, parent = null) => {
   const s = await lstat(filename)
@@ -177,7 +212,13 @@ const describe = async (filename, parent = null) => {
   }
 }
 
-const Scanner = store => {
+// The scan buffers. Each io.in() is a real fsync (~1ms), and one put per file makes a
+// full sweep of a large tree cost tens of seconds. Buffering trades per-record
+// durability for viability, and the trade is safe HERE specifically: a scan is a read
+// of the filesystem, which is the source of truth, so a partial baseline lost to a
+// crash is rebuilt by the next scan. The live watcher does NOT buffer — there each
+// event is a unique observation that no rescan can recover.
+const Scanner = (store, pruned = () => false) => {
   const scan = async targets => {
     const found = new Map()
     const walk = async (dir, parent) => {
@@ -187,16 +228,19 @@ const Scanner = store => {
         const full = path.join(dir, d.name)
         let e
         try { e = await describe(full, parent) } catch { continue }
-        found.set(e.id, e); store.put(e)
-        if (e.kind === 'dir') await walk(full, e.id)
+        found.set(e.id, e); store.put(e, { flush: false })
+        // A pruned directory is COUNTED AND KNOWN, not skipped: its own entry is
+        // stored, so its existence and mtime are tracked, but we do not descend.
+        if (e.kind === 'dir' && !pruned(full)) await walk(full, e.id)
       }
     }
     for (const target of targets) {
       let e
       try { e = await describe(expand(target)) } catch { continue }
-      found.set(e.id, e); store.put(e)
-      if (e.kind === 'dir') await walk(expand(target), e.id)
+      found.set(e.id, e); store.put(e, { flush: false })
+      if (e.kind === 'dir' && !pruned(expand(target))) await walk(expand(target), e.id)
     }
+    store.flush()
     return found
   }
   return { scan }
@@ -231,9 +275,35 @@ const FSWatch = async input => {
   const yaml = typeof input === 'string'
   const raw = yaml ? await loadYaml(input) : structuredClone(input || {})
   const config = normalizeConfig(raw)
-  const dbFile = yaml ? path.join(path.dirname(expand(input)), 'bun.sqlite') : path.resolve('bun.sqlite')
-  const store = MetadataStore(dbFile)
-  const scanner = Scanner(store)
+  // One domain per project: <root>/.fswatch/<name> is a BASE, not a file — the engine
+  // derives .dash/.yaml/.index/.lock/.proj from it.
+  // For a YAML config the domain is the config file: <its dir>/.fswatch/<its name>.
+  // For a POJO there is no config file to anchor to, so the domain is the first target
+  // — each watched tree owns its own baseline. Anchoring a POJO to the cwd instead
+  // would make every FSWatch in a process share one store, which is how state leaked
+  // between tests before this feature.
+  const firstTarget = Object.values(config.clusters).flatMap(c => c.targets)[0]
+  const root = yaml ? path.dirname(expand(input)) : expand(firstTarget || '.')
+  const dbDir = path.join(root, '.fswatch')
+  await mkdir(dbDir, { recursive: true })
+  const domain = yaml ? path.basename(expand(input)).replace(/\.[^.]+$/, '') : 'metadata'
+  const dbBase = path.join(dbDir, domain)
+  const backend = raw.backend || 'iodb'
+  if (!BACKENDS[backend]) throw Error(`Unknown backend: ${backend} (have: ${Object.keys(BACKENDS).join(', ')})`)
+  const store = BACKENDS[backend](dbBase)
+
+  // Directories every cluster excludes are counted but not descended into. This is
+  // narrower than making `exclude` prune in general (a gap the front leaves open): it
+  // is the minimum that makes real trees affordable, and the directory entry itself
+  // is still stored, so its existence and mtime remain observable.
+  const clusterFilters = Object.values(config.clusters).map(c => Filter(c))
+  // The store lives inside the tree it observes, so the watcher would see the engine's
+  // own writes, store them, and write again — an unbounded feedback loop. `.fswatch/`
+  // is never observed, and that is structural, not a user-configurable exclude.
+  const isStore = p => slash(expand(p)).startsWith(slash(dbDir))
+  const pruned = dir => isStore(dir) ||
+    (clusterFilters.length > 0 && clusterFilters.every(f => f.excludedDir(dir)))
+  const scanner = Scanner(store, pruned)
   const clusters = Object.fromEntries(Object.entries(config.clusters).map(([n,c]) => [n,Cluster(n,c)]))
   const watchers = new Map()
   const listeners = new Set()
@@ -241,6 +311,7 @@ const FSWatch = async input => {
   let baseline = new Map()
   const emit = event => {
     if (closed) return
+    if (isStore(event.path || event.from || '')) return
     for (const fn of listeners) fn(event)
     for (const cluster of Object.values(clusters)) cluster._emit(event)
   }
@@ -253,7 +324,7 @@ const FSWatch = async input => {
       try { e = await describe(full, parentPath ? parentPath.id : null) } catch { return }
       e.path = full
       current.set(e.id, e)
-      if (e.kind !== 'dir') return
+      if (e.kind !== 'dir' || pruned(full)) return
       let list
       try { list = await readdir(full, { withFileTypes:true }) } catch { return }
       for (const d of list) await walk(path.join(full,d.name), e)
@@ -280,6 +351,10 @@ const FSWatch = async input => {
       watcher = nodeWatch(dir, { persistent:true }, async (type, filename) => {
         if (closed || !filename) return
         const full = path.join(dir, String(filename))
+        // Drop the store's own writes BEFORE they are persisted. Filtering only at
+        // emit() is too late: the callback calls store.put first, and that write
+        // retriggers this watcher — an unbounded loop that hangs the process.
+        if (isStore(full)) return
         if (type === 'rename') {
           try {
             const e = await describe(full)
@@ -302,6 +377,7 @@ const FSWatch = async input => {
       })
     } catch { return }
     watchers.set(dir, watcher)
+    if (pruned(dir)) return
     let list
     try { list = await readdir(dir,{withFileTypes:true}) } catch { return }
     for (const d of list) if (d.isDirectory()) await watchTree(path.join(dir,d.name))
@@ -319,10 +395,11 @@ const FSWatch = async input => {
     return api
   }
   const on = fn => { listeners.add(fn); return () => listeners.delete(fn) }
-  const stats = () => ({ entries: store.all().length, watchers: watchers.size, clusters: Object.keys(clusters).length, database: dbFile })
+  const io_path = () => store.path()
+  const stats = () => ({ entries: store.all().length, watchers: watchers.size, clusters: Object.keys(clusters).length, database: io_path() })
   const close = () => { if (closed) return; closed = true; for (const w of watchers.values()) w.close(); watchers.clear(); store.close() }
-  const api = { ...clusters, scan, watch, reconcile, on, off:fn=>listeners.delete(fn), stats, close, db:store.db }
+  const api = { ...clusters, scan, watch, reconcile, on, off:fn=>listeners.delete(fn), stats, close, entries: () => store.all() }
   return api
 }
 
-export { FSWatch, parseYaml, normalizeConfig, glob, Filter }
+export { FSWatch, parseYaml, normalizeConfig, glob, Filter, MetadataStore, SqliteStore, BACKENDS }

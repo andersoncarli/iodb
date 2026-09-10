@@ -2,13 +2,13 @@
 
 Minimal filesystem observation for Bun/Linux.
 
-FSWatch observes a filesystem tree, keeps a persistent metadata baseline in `bun.sqlite`, turns filesystem changes into semantic events, and routes those events to named clusters.
+FSWatch observes a filesystem tree, keeps a persistent metadata baseline, turns filesystem changes into semantic events, and routes those events to named clusters.
 
 ## Philosophy
 
-**Backend observes. Observer reconciles. SQLite remembers. Clusters filter. Consumers react.**
+**Backend observes. Observer reconciles. The store remembers. Clusters filter. Consumers react.**
 
-The filesystem is truth. Kernel notifications are hints. SQLite is the last known state, not the source of truth.
+The filesystem is truth. Kernel notifications are hints. The store is the last known state, not the source of truth.
 
 Clusters are views, not partitions. The same physical event may be delivered to multiple clusters.
 
@@ -50,12 +50,19 @@ Root `include`/`exclude` define an implicit `DEFAULT` view. Every other top-leve
 
 ## Metadata
 
-The default database is `bun.sqlite` next to a YAML configuration file, or in the current working directory for a POJO configuration.
+The baseline is stored under `<root>/.fswatch/` — one domain per project, never shared.
+For a YAML configuration the domain is named after the config file and rooted next to it;
+for a POJO it is named `metadata` and rooted at the first target.
 
-Two tables represent the tree:
+Two backends answer the same interface, and the default is `iodb`:
 
-- `nodes`: directories
-- `leaves`: terminal filesystem objects
+```js
+const fs = await FSWatch({ backend: 'sqlite', SOURCE: { targets: ['~/project'] } })
+```
+
+`iodb` keeps an append-only, hash-chained log that stays readable as text. `sqlite` keeps
+a single `entries` table. There is no `nodes`/`leaves` split: that separation was SQL
+bookkeeping, and `kind` already distinguishes a directory from a terminal object.
 
 Identity is `(dev, ino)`. Paths are mutable names/locations, not identity.
 
@@ -106,8 +113,8 @@ await fs.watch({ baseline: false })
              │                             │
           Observer                    MetadataStore
              │                             │
-      Linux watcher                     SQLite
-             │                       nodes + leaves
+      Linux watcher              iodb log  or  SQLite
+             │                    (one entry per dev:ino)
              │                             │
              └────── semantic event ──────┘
                             │
@@ -129,7 +136,7 @@ kernel event loss / uncertainty
             ↓
        filesystem scan
             ↓
-   compare with SQLite baseline
+    compare with the baseline
             ↓
      semantic differences
 ```
@@ -144,7 +151,7 @@ The first version provides:
 - YAML/POJO configuration
 - glob and RegExp filters
 - recursive baseline scan
-- persistent SQLite metadata
+- persistent metadata, on an iodb log or SQLite
 - `(dev, ino)` identity
 - shared directory watchers
 - dynamic watches for newly-created directories

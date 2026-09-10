@@ -2,5 +2,8 @@
   "name": "fswatch",
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "test": "utest" }
+  "private": true,
+  "description": "Filesystem observation for Bun/Linux. A subpackage of iodb: it imports the iodb engine by relative path and is not installable on its own.",
+  "main": "fswatch.js",
+  "scripts": { "test": "bun ../../utest/utest.js fswatch.t.js --force" }
 }
