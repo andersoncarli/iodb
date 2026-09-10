@@ -1,4 +1,4 @@
-import { readTrailer } from '../pagedtext/pagedtext.js'
+import { readTrailer, readGenesis } from '../pagedtext/pagedtext.js'
 import { PagedProjection, materialize } from './paged-projection.js'
 import { readFileSync, writeFileSync, statSync } from 'fs'
 import { join } from 'path'
@@ -48,8 +48,7 @@ test('paged-projection: pages are 4096-aligned', async ({ check, withTempDir }) 
     check(size % PS === 0, true)
     check(size >= 2 * PS, true)   // header + at least one data page
 
-    const raw = readFileSync(file)
-    const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
+    const header = readGenesis(file)
     check(header.magic, 'PAGEDTEXT')
     // Contagem de paginas e chaves de split sao estatistica DERIVADA: vivem no
     // rodape, no fim do arquivo, e nao no header — que e o genesis e nao muda.

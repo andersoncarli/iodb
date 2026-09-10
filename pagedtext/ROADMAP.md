@@ -43,8 +43,12 @@ Measured on the case the docs call fundamental (append-only CSV, 900ms time fenc
 **1.01 pages/append at 0.3MB, 1.01 at 3MB, 1.02 at 12.3MB** — a 39x larger file costs
 1.01x per append.
 
-**The header is the file's genesis and is not rewritten.** It carries only what never
-changes once the file exists: magic, version, pageSize, layout, kind. The per-page
+**The genesis is not rewritten, and since iodb feature 2.1 it does not occupy page 0
+either — it travels in the trailer.** It carries only what never changes once the file
+exists: magic, version, pageSize, layout, kind. Keeping it in page 0 cost the file its
+first line: a CSV parser read the genesis as a record and `head -1` showed metadata
+instead of data. In the trailer it occupies nothing the format needs, and **page 0 is a
+data page like any other**, so a paged `.csv` starts at its first record. The per-page
 statistics — line counts, extents, split keys, logOffset — have one entry per page, so
 keeping them in the header made it grow with the file and be rewritten whole on every
 commit (55 pages per append at 12MB). They now live in a **trailer** at the end, where
@@ -57,8 +61,8 @@ are self-describing: alignment says where each one starts and filling says where
 content ends, so whatever a checkpoint leaves behind is rebuilt on open by reading the
 pages.
 
-- `flush()` walks only the dirty set and writes each page with a positioned `writeSync`,
-  plus the header, which is always rewritten because it is the arbiter.
+- `flush()` walks only the dirty set and writes each page with a positioned `writeSync`.
+  There is no header page to rewrite; the trailer follows the regime above.
 - The `dirty` flag stopped being decorative: a dirty set now governs what gets written.
 - `ftruncateSync` is called when the file shrinks.
 - Every mutating array op is page-local: it locates the page and rewrites only it,
@@ -112,15 +116,37 @@ Both are tracked as iodb front 4 (see Phase 6).
 
 ## Phase 4 — Kinds
 
-Add format-specific strategies without changing the storage API:
+**Started — iodb feature 2.1.** Format-specific strategies, with no change to the storage
+API. The point of a kind is no longer only *what a filling line looks like*: **filling is
+syntax of the format, not garbage the parser has to tolerate.**
 
-- CSV
-- JSON
-- Markdown
-- C-like refinement
-- YAML
+| kind | filling | rationale |
+|---|---|---|
+| `clike` | ` //---` | a comment; survives a trailing-whitespace trim |
+| `text`, `yaml` | ` #---` | idem |
+| `csv`, `jsonl` | ` ,` | an extra delimited field: a plain reader sees one more column and ignores it, and the line ends in a comma, so an editor that trims line ends has nothing to trim |
 
-Each kind should minimize semantic impact rather than impose a proprietary storage format.
+Two consequences that are the reason this phase is worth having:
+
+- **Zero NUL bytes.** `file(1)` says text and `grep` without `-a` finds content.
+- **The trailer wears the format's clothes.** In `csv`/`jsonl` it hides as a record whose
+  first field is empty; in the comment formats both of its lines start with the comment
+  prefix. Without this the stats JSON came back as the file's last record.
+
+Still open: Markdown, and JSON proper (as opposed to `jsonl`).
+
+**A kind declares where its filling stops being neutral, rather than working around it in
+silence.** A line of filling is neutral in `csv` and `jsonl`, and legal in `yaml` between
+top-level keys; it is **not** neutral inside a YAML block scalar (`|`, `>`), where no
+comment is recognized and the filling line becomes part of the string. There is no byte
+sequence that is both filling and nothing in there. So `kindRestrictions('yaml')` returns
+that restriction at runtime, and breaking a page outside a block scalar is the caller's
+responsibility, not the storage's.
+
+**Validation, because removal cannot be prevented.** Nothing stops an external editor from
+stripping the filling, but the damage is detectable: `validate(file)` checks alignment (the
+size is an exact multiple of `pageSize`), the absence of NUL bytes and that the trailer's
+declared page count fits in the file.
 
 ## Phase 5 — Advanced access
 

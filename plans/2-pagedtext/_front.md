@@ -52,9 +52,27 @@ concorrencia e migraram para a **frente 4**. O que sobra aqui e o formato e o ac
 
 ## Ordem das features
 
-**2.0** (o primitivo unico, com escrita O(paginas sujas)) → **2.4** (indice paginado:
-codec chave→offset com paginas slotted) → **2.5** (projecao paginada, reimplementada como
-codec sobre o 2.0).
+**2.0** (o primitivo unico, com escrita O(paginas sujas)) → **2.1** (interferencia minima)
+→ **2.2** (projecao tabular, CSV tipado) → **2.4** (indice paginado) → **2.5** (projecao
+paginada, reimplementada como codec sobre o 2.0).
+
+A **2.0 fechou** em 2026-09-10 (sprint 015): o pagedtext virou o primitivo unico, a
+projecao converteu-se em codec sobre ele, e o custo de append ficou plano — uma pagina de
+dados por append, com o arquivo 39x maior. O que destravou isso foi separar a **genese**
+(magic, versao, pageSize, layout, kind — nunca muda) das **estatisticas derivadas**
+(contagens, extents, chaves), que passaram para um rodape no fim do arquivo.
+
+A **2.1 e a 2.2 nasceram do que a 2.0 deixou aberto**, e nessa ordem porque a segunda
+depende da primeira. A 2.0 entregou o custo mas nao a outra metade da promessa desta
+frente: que o arquivo **continua sendo texto do formato dele**. Medido num CSV de 200
+registros, metade dos bytes e NUL, `file(1)` classifica o arquivo como `data` e `grep`
+sem `-a` nao encontra o que esta la. A 2.1 conserta isso; a 2.2 so entao pode por o schema
+na primeira linha, porque hoje ela esta ocupada pelo header.
+
+As duas seguem desenho que **ja estava escrito nos docs** e nao foi inventado agora:
+`docs/05-csv-tipado-formato-texto.md` (o CSV tipado, e o enchimento como campo extra
+sintatico em vez de linha em branco tolerada) e `docs/04-projecao-tabular-hierarquica.md`
+(tabular e hierarquica sao duas interpretacoes da mesma projecao, nao dois storages).
 
 A 2.5 foi **rebaixada** de 🟢 em 2026-09-10: o criterio dela ("escrita O(paginas sujas)")
 nunca foi implementado, e o eval passou por metrica-proxy checando alinhamento no lugar de

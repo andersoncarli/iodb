@@ -1,5 +1,5 @@
 import IO, { merge, append, assign } from './io-engine.js'
-import { readTrailer } from '../pagedtext/pagedtext.js'
+import { readTrailer, readGenesis } from '../pagedtext/pagedtext.js'
 import { statSync, readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -100,8 +100,7 @@ test('io-engine paged: .proj file is 4096-aligned', async ({ check, withTempDir 
 
     const size = statSync(base + '.proj').size
     check(size % PS === 0, true)
-    const raw = readFileSync(base + '.proj')
-    const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
+    const header = readGenesis(base + '.proj')
     check(header.magic, 'PAGEDTEXT')
     // O header e genesis; a contagem de paginas esta no rodape.
     check(readTrailer(base + '.proj').pages.length > 1, true)   // genuinely multi-page

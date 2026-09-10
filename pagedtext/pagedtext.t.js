@@ -1,4 +1,4 @@
-import { PagedText } from './pagedtext.js'
+import { PagedText, readGenesis, validate, kindRestrictions } from './pagedtext.js'
 import { readFileSync, writeFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -43,8 +43,7 @@ test('pagedtext: header is versioned and page 0', async ({ check, withTempDir })
     const t = PagedText({ path: file, pageSize: 4096 })
     t.flush()
 
-    const raw = readFileSync(file)
-    const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
+    const header = readGenesis(file)
     check(header.magic, 'PAGEDTEXT')
     check(header.version, 3)
     check(header.pageSize, PS)
@@ -206,8 +205,7 @@ test('pagedtext: legacy plain-text file migrates on open', async ({ check, withT
     check(t.at(159), `legacy line 159 ${'.'.repeat(20)}`)
 
     // after first open it now carries the header
-    const raw = readFileSync(file)
-    const header = JSON.parse(raw.toString('utf8', 0, raw.indexOf(0)))
+    const header = readGenesis(file)
     check(header.magic, 'PAGEDTEXT')
   })
 })
@@ -216,11 +214,13 @@ test('pagedtext: unknown header version is discarded, not reinterpreted as text'
   await withTempDir(dir => {
     const file = join(dir, 'future.txt')
     // A file written by a LATER version: valid magic, version we cannot read.
-    const body = JSON.stringify({ magic: 'PAGEDTEXT', version: 99, pageSize: PS, pages: [2] })
-    const buf = Buffer.alloc(PS * 2)
-    buf.write(body, 0, 'utf8')
-    buf.write('some future encoding\n', PS, 'utf8')
-    writeFileSync(file, buf)
+    // A genese viaja no RODAPE, entao e la que a versao futura aparece.
+    const body = JSON.stringify({ magic: 'PAGEDTEXT', version: 99, pageSize: PS, pages: [1] })
+    const data = Buffer.alloc(PS, ' ')
+    data.write('some future encoding\n', 0, 'utf8')
+    const trailer = Buffer.alloc(PS, ' ')
+    trailer.write('#- PAGEDTEXT-TRAILER\n' + body + '\n', 0, 'utf8')
+    writeFileSync(file, Buffer.concat([data, trailer]))
     const before = readFileSync(file)
 
     const t = PagedText({ path: file, pageSize: PS })
@@ -276,4 +276,99 @@ test('pagedtext: checkpoint trailer — appends since the last one are recovered
     check(re[0], `linha 0 ${'y'.repeat(60)}`)
     re.close()
   })
+})
+
+test('pagedtext: o arquivo e texto — zero byte NUL, e nao so "quase texto"', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'dados.csv')
+    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
+    t.push('id,name,email')
+    for (let i = 0; i < 300; i++) t.push(`${i},user${i},user${i}@example.com`)
+    t.close()
+
+    // O criterio nao e estetico: com pagina zerada, metade dos bytes era NUL,
+    // `file(1)` classificava o arquivo como `data` e `grep` sem -a devolvia
+    // "nao encontrado" para conteudo que estava la.
+    const raw = readFileSync(file)
+    let nuls = 0
+    for (let i = 0; i < raw.length; i++) if (raw[i] === 0) nuls++
+    check(nuls, 0)
+  })
+})
+
+test('pagedtext: a pagina 0 e dado — um .csv comeca no primeiro registro', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'dados.csv')
+    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
+    t.push('id,name')
+    for (let i = 0; i < 200; i++) t.push(`${i},user${i}`)
+    t.close()
+
+    // A genese viaja no rodape: quem le a primeira linha ve DADO, nao metadado.
+    const first = readFileSync(file, 'utf8').split('\n')[0]
+    check(first, 'id,name')
+    check(first.includes('PAGEDTEXT'), false)
+
+    // E ela continua legivel de onde foi parar.
+    const g = readGenesis(file)
+    check(g.magic, 'PAGEDTEXT')
+    check(g.kind, 'csv')
+  })
+})
+
+test('pagedtext: o enchimento sobrevive a um editor que apara fim de linha', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'x.txt')
+    const t = PagedText({ path: file, pageSize: PS })
+    for (let i = 0; i < 130; i++) t.push(`data-${i} ${'='.repeat(20)}`)
+    t.close()
+    const before = statSync(file).size
+
+    // `sed -i 's/ *$//'` — o caso que destruia o alinhamento quando o
+    // enchimento era uma linha de um espaco so.
+    const trimmed = readFileSync(file, 'utf8')
+      .split('\n').map(l => l.replace(/ +$/, '')).join('\n')
+    writeFileSync(file, trimmed)
+
+    check(statSync(file).size, before)
+    const re = PagedText({ path: file, pageSize: PS })
+    check(re.length, 130)
+    check(re.at(-1), `data-129 ${'='.repeat(20)}`)
+    re.close()
+  })
+})
+
+test('pagedtext: validate detecta um arquivo cujo enchimento foi removido', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const file = join(dir, 'ok.csv')
+    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
+    for (let i = 0; i < 300; i++) t.push(`${i},user${i}`)
+    t.close()
+
+    // Nao da para PREVENIR que alguem apague o enchimento; da para DETECTAR.
+    check(validate(file).ok, true)
+    check(validate(file).problems.length, 0)
+
+    const quebrado = join(dir, 'quebrado.csv')
+    writeFileSync(quebrado, readFileSync(file, 'utf8')
+      .split('\n').filter(l => !/^\s*,\s*$/.test(l)).join('\n'))
+
+    const v = validate(quebrado)
+    check(v.ok, false)
+    check(v.problems.some(p => p.includes('multiplo')), true)
+  })
+})
+
+// O kind yaml DECLARA onde seu enchimento deixa de ser neutro, em vez de
+// contornar em silencio. Um bloco escalar nao reconhece comentario, entao a
+// linha de enchimento viraria conteudo da string — e nao ha byte que seja
+// enchimento e nada ao mesmo tempo ali dentro. Os formatos onde o enchimento e
+// neutro em todo lugar declaram lista vazia, e a diferenca entre as duas
+// listas e a propria declaracao.
+test('o kind yaml declara a restricao do bloco escalar', () => {
+  const r = kindRestrictions('yaml')
+  check(r.length > 0, true)
+  check(r.some(x => x.includes('block scalar')), true)
+  check(kindRestrictions('csv').length, 0)
+  check(kindRestrictions('clike').length, 0)
 })

@@ -40,14 +40,54 @@ const indexKey = p => typeof p === 'string' && /^(0|[1-9]\d*)$/.test(p)
 
 const builtinKinds = {
   clike: {
-    fill: () => ' \n',
+    fill: () => ' //---\n',
     commentFill: () => '//- pagedtext filling\n',
-    isFill: line => line.trimStart().startsWith('//- pagedtext filling') || line === ' '
+    isFill: line => /^\s*\/\/-+/.test(line) || line.trim() === ''
   },
   text: {
-    fill: () => ' \n',
+    fill: () => ' #---\n',
     commentFill: () => '#- pagedtext filling\n',
-    isFill: line => line.trimStart().startsWith('#- pagedtext filling') || line === ' '
+    isFill: line => /^\s*#-+/.test(line) || line.trim() === ''
+  },
+  // Em csv o enchimento vai ANTES da ultima virgula: a linha continua sendo um
+  // registro CSV valido com um campo a mais, e o campo extra e espaco. Um
+  // leitor comum le uma coluna extra e a ignora; um editor que apara espaco em
+  // fim de linha nao tem o que aparar, porque a linha termina em virgula.
+  csv: {
+    fill: () => ' ,\n',
+    commentFill: () => ' ,\n',
+    isFill: line => /^\s*,\s*$/.test(line) || line.trim() === '',
+    // Em csv nao existe comentario, entao o rodape se esconde como um registro
+    // cujo primeiro campo e vazio — um leitor que filtra registros sem chave
+    // nunca o ve, e `head`/`grep` continuam mostrando o arquivo inteiro.
+    hide: line => ',' + line
+  },
+  // json e jsonl: espacos antes da virgula, pelo mesmo motivo — a virgula
+  // ancora o fim da linha contra o trim.
+  jsonl: {
+    fill: () => ' ,\n',
+    commentFill: () => ' ,\n',
+    isFill: line => /^\s*,\s*$/.test(line) || line.trim() === '',
+    hide: line => ',' + line
+  },
+  // YAML — DECLARACAO DE RESTRICAO, e nao um contorno silencioso.
+  // O enchimento e um comentario `#---`, que e neutro no fluxo de mapeamentos
+  // e sequencias do topo. Ele NAO e neutro dentro de um bloco escalar (`|` ou
+  // `>`): ali o YAML nao reconhece comentario nenhum, e a linha `#---` entra
+  // como CONTEUDO da string, junto com toda linha de espacos. Nao existe
+  // sequencia de bytes que seja simultaneamente enchimento e nada dentro de um
+  // bloco escalar — o bloco so termina quando a indentacao cai.
+  // Por isso o kind declara a restricao em vez de fingir que nao existe: quem
+  // pagina um yaml com blocos escalares tem que quebrar a pagina FORA do
+  // bloco, e essa e uma responsabilidade do chamador, nao do storage.
+  yaml: {
+    fill: () => ' #---\n',
+    commentFill: () => '#- pagedtext filling\n',
+    isFill: line => /^\s*#-+/.test(line) || line.trim() === '',
+    // Onde o enchimento deste kind PARA de ser neutro. Legivel em runtime
+    // (`kindOf('yaml').unsafeIn`) para que a restricao seja consultavel, e nao
+    // so um paragrafo que envelhece calado num .md.
+    unsafeIn: ['block scalar (| e >): linha de enchimento vira conteudo da string']
   }
 }
 
@@ -120,32 +160,31 @@ function renderPage(lines, kind, pageSize) {
     out += unit
     free -= unitLen
   }
-  if (free > 0) out += ' '.repeat(free)
+  // A sobra menor que uma unidade de enchimento tambem precisa de ancora: uma
+  // linha so de espacos e apagada por um editor que apara fim de linha, e ai o
+  // alinhamento vai junto. Termina-se com a ultima linha do enchimento do kind,
+  // que por construcao nao acaba em espaco.
+  // A sobra menor que uma unidade tambem precisa de ancora, e a ancora tem que
+  // ser algo que o proprio kind reconheca como enchimento — senao ela volta na
+  // leitura como se fosse dado. Usa-se a unidade sem o espaco inicial, que e
+  // exatamente isso e cabe onde a unidade inteira nao cabe.
+  if (free > 0) {
+    // A ancora do kind sem o espaco inicial: cabe onde a unidade inteira nao
+    // cabe. Se nem ela couber, devolve-se uma unidade ja escrita para que a
+    // sobra volte a ser grande o suficiente — o que nunca se faz e terminar a
+    // pagina numa linha so de espacos, porque um editor que apara fim de linha
+    // a apaga e leva o alinhamento junto.
+    const tight = unit.trimStart()
+    const tightLen = Buffer.byteLength(tight)
+    if (free < tightLen && out.endsWith(unit)) {
+      out = out.slice(0, -unit.length)
+      free += unitLen
+    }
+    out += free >= tightLen ? ' '.repeat(free - tightLen) + tight : ' '.repeat(free)
+  }
   return Buffer.from(out, 'utf8')
 }
 
-/**
- * O header e o GENESIS do arquivo: magic, version, pageSize, layout, kind.
- * Nada ali muda depois que o arquivo existe, entao em condicao normal ele NAO e
- * reescrito — e uma pagina so, gravada uma vez.
- *
- * O que muda a cada escrita (contagem de linhas por pagina, extents, chaves de
- * split, logOffset) e ESTATISTICA DERIVADA, e vive fora daqui: no trailer. Foi
- * misturar as duas naturezas que fazia o header crescer com o arquivo e ser
- * reescrito inteiro a cada commit — 55 paginas por append num arquivo de 12MB.
- */
-function serializeHeader(meta, pageSize) {
-  const body = JSON.stringify({
-    magic: MAGIC,
-    version: HEADER_VERSION,
-    pageSize,
-    layout: meta.layout || 'sequential',
-    kind: meta.kind || 'text'
-  })
-  const buf = Buffer.alloc(pageSize)
-  buf.write(body, 0, 'utf8')
-  return buf
-}
 
 /**
  * O TRAILER — as estatisticas derivadas do arquivo, gravadas DEPOIS das paginas
@@ -173,10 +212,28 @@ function serializeHeader(meta, pageSize) {
 //                     que passou do checkpoint e reconstruido lendo as paginas
 //                     a partir dali — elas sao autodescritivas, entao o trailer
 //                     nunca foi fonte de verdade, so cache.
-const TRAILER_MARK = '\u0000PAGEDTEXT-TRAILER\n'
+const TRAILER_MARK = '#- PAGEDTEXT-TRAILER'
 
-function serializeTrailer(meta, pageSize) {
+/** A pagina comeca o rodape? A marca pode vir vestida pelo kind (em csv/jsonl
+ *  ela ganha uma virgula na frente), entao procura-se na primeira linha e nao
+ *  no primeiro byte. */
+function startsTrailer(raw) {
+  const nl = raw.indexOf('\n')
+  return (nl === -1 ? raw : raw.slice(0, nl)).includes(TRAILER_MARK)
+}
+
+function serializeTrailer(meta, kind, pageSize) {
   const body = JSON.stringify({
+    // A GENESE VIAJA NO RODAPE. Ela nao muda depois que o arquivo existe, mas
+    // guardar isso na pagina 0 custava a primeira linha do arquivo: um parser
+    // de CSV lia o header como se fosse um registro, e `head -1` mostrava
+    // metadado em vez de dado. No rodape ela nao ocupa lugar nenhum que o
+    // formato precise, e o arquivo passa a comecar no primeiro registro.
+    magic: MAGIC,
+    version: HEADER_VERSION,
+    pageSize,
+    layout: meta.layout || 'sequential',
+    kind: meta.kind || 'text',
     pages: meta.counts,
     extents: meta.extents,
     keys: meta.keys || [],
@@ -184,17 +241,34 @@ function serializeTrailer(meta, pageSize) {
   })
   // Alinhado a pageSize como qualquer outra pagina: o arquivo inteiro continua
   // sendo um multiplo exato, que e o invariante que torna offset calculavel.
-  const span = Math.max(1, Math.ceil((Buffer.byteLength(body) + 1) / pageSize))
-  const buf = Buffer.alloc(span * pageSize)
-  buf.write(TRAILER_MARK + body + '\n', 0, 'utf8')
-  return buf
+  // O rodape veste a roupa do formato: em csv/jsonl vira um registro de campo
+  // inicial vazio; nos formatos com comentario, as duas linhas ja comecam pelo
+  // prefixo de comentario e o parser as ignora sozinho. Sem isso o JSON das
+  // stats volta como se fosse o ultimo registro do arquivo.
+  const hide = kind.hide || (l => l)
+  return renderPage([hide(TRAILER_MARK), hide(body)], kind, pageSize)
 }
 
 function parseTrailer(buf) {
   try {
     const raw = buf.toString('utf8')
-    if (!raw.startsWith(TRAILER_MARK)) return null
-    const t = JSON.parse(raw.slice(TRAILER_MARK.length).trim())
+    // A marca pode vir vestida pelo kind (um ',' na frente, em csv/jsonl).
+    const head = raw.slice(0, raw.indexOf('\n') === -1 ? raw.length : raw.indexOf('\n'))
+    if (!head.includes(TRAILER_MARK)) return null
+    // O corpo e a linha SEGUINTE a marca: a marca ocupa uma linha inteira para
+    // que o rodape continue sendo texto de linhas, como o resto do arquivo.
+    const nl = raw.indexOf('\n')
+    if (nl === -1) return null
+    // So a linha do corpo: depois dela vem o enchimento do kind, que antes era
+    // byte NUL e agora sao linhas de comentario — e um `.trim()` sobre a cauda
+    // inteira arrastaria essas linhas para dentro do JSON.parse.
+    const rest = raw.slice(nl + 1)
+    const end = rest.indexOf('\n')
+    let line = (end === -1 ? rest : rest.slice(0, end)).trim()
+    // Tira a roupa do formato: o corpo comeca no primeiro '{'.
+    const brace = line.indexOf('{')
+    if (brace > 0) line = line.slice(brace)
+    const t = JSON.parse(line)
     if (!Array.isArray(t.pages)) return null
     return t
   } catch { return null }
@@ -206,8 +280,20 @@ function parseTrailer(buf) {
 const UNKNOWN = Symbol('unknown-header')
 
 function parseHeader(buf) {
-  const nul = buf.indexOf(0)
-  const text = buf.toString('utf8', 0, nul === -1 ? buf.length : nul).trim()
+  // A genese e a PRIMEIRA LINHA da pagina 0; o resto da pagina e enchimento do
+  // kind. Antes o corte era no primeiro byte NUL, o que so funcionava enquanto
+  // a pagina era zerada — isto e, enquanto o arquivo nao era texto.
+  const raw = buf.toString('utf8')
+  const nl = raw.indexOf('\n')
+  // Corta tambem no primeiro NUL: um arquivo escrito por OUTRA versao pode ter
+  // a pagina 0 zerada em vez de preenchida com enchimento, e precisamos
+  // reconhece-lo como header de versao desconhecida — nao como "sem header",
+  // que e o desfecho que leva a reinterpretar o arquivo e regrava-lo por cima.
+  const nul = raw.indexOf('\u0000')
+  let end = raw.length
+  if (nl !== -1) end = Math.min(end, nl)
+  if (nul !== -1) end = Math.min(end, nul)
+  const text = raw.slice(0, end).trim()
   if (!text) return null
   let h
   try { h = JSON.parse(text) } catch { return null }
@@ -243,7 +329,8 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
   let counts = []            // line count per data page (from header)
   let extents = []           // pages OCCUPIED per data page (>=1; >1 = oversized line)
   let offsets = []           // byte offset of each data page (prefix sum of extents)
-  let headerPages = 1
+  // Zero: nao ha pagina de header. A genese mora no rodape e a pagina 0 e dado.
+  let headerPages = 0
   const cache = new Map()    // pageIndex -> { lines: string[], dirty: bool }
   const dirty = new Set()    // page indices awaiting a positional write
   let headerDirty = false
@@ -263,7 +350,11 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
   function ensureFile() {
     mkdirSync(path.dirname(file), { recursive: true })
     if (!existsSync(file)) {
-      writeFileSync(file, serializeHeader({ layout, kind: opts.kindName, counts: [], extents: [] }, pageSize))
+      // Vazio, nao "com um header": a genese so existe a partir do primeiro
+      // flush, e vai no rodape. Semear uma pagina de header aqui a
+      // transformaria na pagina 0 de dados — que e exatamente a linha de JSON
+      // que esta feature veio remover do inicio do arquivo.
+      writeFileSync(file, '')
     }
   }
 
@@ -296,13 +387,13 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
   function rebuildStatsFromPages(size) {
     counts = []
     extents = []
-    let pos = pageSize                      // logo apos o header de genesis
+    let pos = 0                             // a pagina 0 e dado: nao ha header a pular
     while (pos + pageSize <= size) {
       const buf = Buffer.alloc(pageSize)
       readSync(fd, buf, 0, pageSize, pos)
       const raw = buf.toString('utf8')
       // O trailer se anuncia; ele encerra as paginas de dados.
-      if (raw.startsWith(TRAILER_MARK)) break
+      if (startsTrailer(raw)) break
       const lines = raw.replace(/\r\n/g, '\n').split('\n')
       if (lines.at(-1) === '') lines.pop()
       const clean = stripFill(lines, kind)
@@ -324,7 +415,7 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
       const buf = Buffer.alloc(pageSize)
       readSync(fd, buf, 0, pageSize, pos)
       const raw = buf.toString('utf8')
-      if (raw.startsWith(TRAILER_MARK)) break
+      if (startsTrailer(raw)) break
       const lines = raw.replace(/\r\n/g, '\n').split('\n')
       if (lines.at(-1) === '') lines.pop()
       const clean = stripFill(lines, kind)
@@ -338,53 +429,44 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
   function loadHeader() {
     openFd()
     const st = fstatSync(fd)
-    const probe = Buffer.alloc(Math.min(pageSize, Math.max(0, st.size)))
-    if (probe.length) readSync(fd, probe, 0, probe.length, 0)
-    let h = probe.length ? parseHeader(probe) : null
 
-    if (h === UNKNOWN) {
-      // A header we cannot read is NOT legacy text. Reinterpreting it as lines
-      // and flushing would rewrite the file with the wrong interpretation —
-      // exactly how a v1 .proj used to be destroyed by a v2 reader. Present as
-      // empty and let the caller rebuild from its source of truth.
-      needsRebuild = true
-      counts = []; extents = []; headerPages = 1; recomputeOffsets()
-      return true
-    }
-
-    if (h) {
-      headerWritten = true
-      headerPages = 1
-      headerLayout = h.layout || layout
-
-      // O trailer esta depois das paginas de dados, no fim do arquivo. Ele e a
-      // ultima linha: le-se a cauda e pega-se o que vem depois da ultima quebra.
-      const tail = Math.min(st.size, 1 << 20)
+    // A GENESE VEM DO RODAPE, e por isso a leitura comeca pelo FIM do arquivo.
+    // A pagina 0 e pagina de dados como qualquer outra — e o que faz um .csv
+    // paginado comecar no primeiro registro em vez de numa linha de JSON.
+    const tail = Math.min(st.size, 1 << 20)
+    let t = null
+    if (tail > 0) {
       const tbuf = Buffer.alloc(tail)
       readSync(fd, tbuf, 0, tail, st.size - tail)
       const text = tbuf.toString('utf8')
       const at = text.lastIndexOf(TRAILER_MARK)
-      const t = at === -1 ? null
-        : parseTrailer(Buffer.from(text.slice(at).replace(/\u0000+$/, ''), 'utf8'))
+      if (at !== -1) t = parseTrailer(Buffer.from(text.slice(at), 'utf8'))
+    }
 
-      if (t) {
-        counts = (t.pages || []).slice()
-        extents = (t.extents || []).slice()
-        while (extents.length < counts.length) extents.push(1)
-        splitKeys = t.keys || []
-        logOffset = t.logOffset ?? 0
-        // O trailer pode estar ATRASADO: sob checkpoint, os appends desde o
-        // ultimo gravaram paginas de dados sem regravar as stats. As paginas que
-        // sobram depois do que o trailer declara sao reais, e sao lidas aqui.
-        // E por isso que o trailer pode ficar para tras sem risco.
-        const declared = pageSize + counts.reduce((a, e, i) => a + (extents[i] || 1) * pageSize, 0)
-        if (st.size > declared) appendStatsFromPages(declared, st.size)
-      } else {
-        // Trailer ausente ou corrompido. Nao e perda: as paginas de dados sao
-        // autodescritivas — o alinhamento diz onde cada uma comeca e o filling
-        // diz onde o conteudo acaba — entao reconstroi-se a partir delas.
-        rebuildStatsFromPages(st.size)
-      }
+    if (t && t.magic === MAGIC && t.version !== HEADER_VERSION) {
+      // Versao que nao sabemos ler NAO e texto legado. Reinterpretar e gravar
+      // por cima e como um leitor v2 destruia um .proj v1: apresenta-se vazio e
+      // sinaliza-se rebuild, e quem chamou reconstroi da fonte de verdade.
+      needsRebuild = true
+      counts = []; extents = []; headerPages = 0; recomputeOffsets()
+      return true
+    }
+
+    if (t && t.magic === MAGIC) {
+      headerWritten = true
+      headerPages = 0
+      headerLayout = t.layout || layout
+
+      counts = (t.pages || []).slice()
+      extents = (t.extents || []).slice()
+      while (extents.length < counts.length) extents.push(1)
+      splitKeys = t.keys || []
+      logOffset = t.logOffset ?? 0
+      // O trailer pode estar ATRASADO: sob checkpoint, os appends desde o
+      // ultimo gravaram paginas de dados sem regravar as stats. As paginas que
+      // sobram depois do que o trailer declara sao reais, e sao lidas aqui.
+      const declared = counts.reduce((a, e, i) => a + (extents[i] || 1) * pageSize, 0)
+      if (st.size > declared) appendStatsFromPages(declared, st.size)
       recomputeOffsets()
       return true
     }
@@ -630,15 +712,9 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
     let pagesWritten = 0
     let bytes = 0
 
-    // O header e genesis: uma pagina, escrita so quando o arquivo nasce. Em
-    // regime normal ele NAO e tocado, e por isso nao aparece no custo do append.
-    if (!headerWritten) {
-      const header = serializeHeader({ layout: headerLayout, kind: opts.kindName }, pageSize)
-      writeSync(fd, header, 0, header.length, 0)
-      headerWritten = true
-      pagesWritten += 1
-      bytes += header.length
-    }
+    // Nao ha pagina de header para escrever: a genese viaja no rodape, junto
+    // das stats. A pagina 0 e a primeira pagina de dados.
+    headerWritten = true
 
     recomputeOffsets()
 
@@ -667,16 +743,19 @@ function makeStore(file, kind, pageSize, layout, opts = {}) {
     sinceCheckpoint++
     const due = sinceCheckpoint >= checkpointEvery
     if (due) {
-      const trailer = serializeTrailer({ counts, extents, keys: splitKeys, logOffset }, pageSize)
+      const trailer = serializeTrailer({ counts, extents, keys: splitKeys, logOffset, layout: headerLayout, kind: opts.kindName }, kind, pageSize)
       writeSync(fd, trailer, 0, trailer.length, end)
       bytes += trailer.length
       sinceCheckpoint = 0
       const total = end + trailer.length
       if (fstatSync(fd).size > total) ftruncateSync(fd, total)
     } else if (fstatSync(fd).size > end) {
-      // Ha um trailer velho logo depois dos dados. Ele descreve uma versao
-      // anterior, entao seria pior que nao ter nenhum: some com ele.
-      ftruncateSync(fd, end)
+      // Ha um trailer velho logo depois dos dados. As STATS dele estao
+      // atrasadas — e isso e seguro, porque as paginas sao autodescritivas e a
+      // abertura reconstroi o que faltar. Mas a GENESE dele continua valendo,
+      // porque genese nao muda. Entao ele fica onde esta: apaga-lo deixaria o
+      // arquivo sem pageSize declarado, que e a unica coisa que nao se
+      // reconstroi lendo paginas.
     }
 
     fsyncSync(fd)
@@ -962,7 +1041,81 @@ export function readTrailer(file) {
   const raw = readFileSync(file)
   const at = raw.lastIndexOf(TRAILER_MARK)
   if (at === -1) return null
-  return parseTrailer(Buffer.from(raw.toString('utf8', at).replace(/\u0000+$/, ''), 'utf8'))
+  return parseTrailer(Buffer.from(raw.toString('utf8', at), 'utf8'))
+}
+
+/**
+ * Le a genese (magic, versao, pageSize, layout, kind) sem abrir um store.
+ *
+ * Ela vive no RODAPE, junto das stats, e nao na pagina 0 — que e pagina de
+ * dados como qualquer outra. E o que faz um .csv paginado comecar no primeiro
+ * registro em vez de numa linha de JSON que nenhum parser de CSV entende.
+ */
+/**
+ * Valida se um arquivo esta corretamente paginado.
+ *
+ * Existe porque nao da para PREVENIR que o enchimento seja removido — um
+ * editor, um script, um `sed -i` distraido. O enchimento desta versao resiste
+ * ao caso comum (aparar espaco em fim de linha), mas resistir nao e garantir.
+ * O que da para fazer e DETECTAR, e detectar barato: as tres condicoes abaixo
+ * sao verificaveis sem reconstruir nada.
+ *
+ * Devolve { ok, size, pageSize, problems[] }. `problems` vazio significa que o
+ * arquivo esta integro do ponto de vista da paginacao — nao diz nada sobre o
+ * conteudo, que e assunto do codec.
+ */
+export function validate(file) {
+  const problems = []
+  let raw
+  try { raw = readFileSync(file) } catch (e) {
+    return { ok: false, size: 0, pageSize: 0, problems: [`nao foi possivel ler: ${e.code || e.message}`] }
+  }
+
+  const genesis = readGenesis(file)
+  if (!genesis) problems.push('sem genese legivel na pagina 0')
+  else if (genesis.magic !== MAGIC) problems.push(`magic inesperado: ${genesis.magic}`)
+
+  const pageSize = genesis?.pageSize || 0
+  if (!pageSize) problems.push('genese nao declara pageSize')
+
+  // 1. ALINHAMENTO — o invariante de que todo offset e calculavel. Se o tamanho
+  //    nao e multiplo exato do pageSize, alguem tirou ou pos bytes.
+  if (pageSize && raw.length % pageSize !== 0) {
+    const falta = pageSize - (raw.length % pageSize)
+    problems.push(`tamanho ${raw.length} nao e multiplo de ${pageSize} (faltam ${falta} bytes)`)
+  }
+
+  // 2. BYTE NUL — o arquivo deve ser texto. NUL e o sintoma de pagina zerada,
+  //    que e o defeito que esta versao removeu; se voltou, algo o reintroduziu.
+  let nulCount = 0
+  for (let i = 0; i < raw.length; i++) if (raw[i] === 0) nulCount++
+  if (nulCount) problems.push(`${nulCount} byte(s) NUL — o arquivo nao e texto`)
+
+  // 3. RODAPE — as stats sao cache, nao fonte de verdade, entao um rodape
+  //    ausente e recuperavel; mas o numero de paginas que ele declara tem que
+  //    caber no arquivo, senao o que esta gravado descreve outro arquivo.
+  const trailer = readTrailer(file)
+  if (!trailer) problems.push('sem rodape legivel (recuperavel: reconstruivel das paginas)')
+  else if (pageSize) {
+    const declared = trailer.pages.reduce((a, _, i) => a + (trailer.extents?.[i] || 1), 0)
+    const cabe = pageSize * (1 + declared) <= raw.length
+    if (!cabe) problems.push(`o rodape declara ${declared} pagina(s) de dados, que nao cabem em ${raw.length} bytes`)
+  }
+
+  return { ok: problems.length === 0, size: raw.length, pageSize, problems }
+}
+
+/** Onde o enchimento de um kind PARA de ser neutro. Lista vazia = neutro em
+ *  todo o formato. Existe para que a restricao seja consultavel por quem
+ *  pagina, em vez de viver so num paragrafo de documentacao. */
+export function kindRestrictions(kind) {
+  return (builtinKinds[kind]?.unsafeIn || []).slice()
+}
+
+export function readGenesis(file) {
+  const t = readTrailer(file)
+  if (!t || t.magic !== MAGIC) return null
+  return { magic: t.magic, version: t.version, pageSize: t.pageSize, layout: t.layout, kind: t.kind }
 }
 
 export default PagedText
