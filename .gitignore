@@ -5,4 +5,5 @@ bun.lock
 .sprint/eval-log.jsonl
 STATUS.md
 sprints/_TOC.md
-archive/
+archive/.pagedtext-test/
+project.listing.md

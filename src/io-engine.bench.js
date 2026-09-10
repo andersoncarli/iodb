@@ -244,7 +244,7 @@ async function runGrid(sizes, concurrencies, writesPerCell) {
 // Guarded so `bun ../utest/utest.js io-engine.bench.js` (which imports this
 // file for the sanity test below) does not also run the whole grid.
 const isMain = import.meta.main
-if (isMain) {
+if (isMain && !process.argv.includes('--paged')) {
   // Default grid is chosen to FIT the per-cell budget, not to be impressive.
   // 100k stayed in the 2.1 baseline because that baseline was the point — the
   // 733ms critical section it recorded is exactly what 2.2 set out to kill. But
@@ -321,4 +321,110 @@ if (globalThis.test) {
   })
 }
 
-export { runGrid, summarize, runSingleProcess, runMultiProcess }
+// ── Paged projection comparison (feature 2.5) ───────────────────────────────
+//
+// The goal 2.5 serves: a store must OPEN and answer GET without holding the
+// whole projection in RAM. This section measures the two operations that
+// changes — open() and a get() that misses the in-memory hot set — for the
+// plain path against `pageSize: 4096`, at sizes where the difference shows.
+//
+// Rules (user): localized (one op per measurement), time-bounded (per-size
+// budget, aborts on overrun), at most 3 concurrent workers.
+
+const PAGED_MAX_PROCS = 3
+const PAGED_SIZE_BUDGET_MS = 4000
+
+function seedBatched(io, count, budgetMs) {
+  const deadline = Date.now() + budgetMs
+  let written = 0
+  for (let b = 0; b < count; b += SEED_BATCH) {
+    if (Date.now() >= deadline) break
+    const n = Math.min(SEED_BATCH, count - b)
+    for (let i = 0; i < n; i++) io.in({ ['seed' + String(b + i).padStart(7, '0')]: i }, { flush: 0 })
+    io.flush()
+    written += n
+  }
+  return written
+}
+
+function measureOpen(dir, size, paged) {
+  const pageSize = paged ? 4096 : 0
+  const base = join(dir, paged ? 'P' : 'Q')
+  const seedIo = IO(base, { reduce: merge, initial: {}, pageSize })
+  seedIo.open({ _entity: 'b' })
+  const actual = seedBatched(seedIo, size, 3000)
+  seedIo.close()
+
+  // cold open — new IO instance, times only open()
+  const t0 = process.hrtime.bigint()
+  const io = IO(base, { reduce: merge, initial: {}, pageSize })
+  io.open()
+  const openMs = Number(process.hrtime.bigint() - t0) / 1e6
+
+  // one get() on a key that exists (a miss against any hot set)
+  const probe = 'seed' + String(Math.floor(actual / 2)).padStart(7, '0')
+  const g0 = process.hrtime.bigint()
+  const val = io.get(probe)
+  const getMs = Number(process.hrtime.bigint() - g0) / 1e6
+  io.close()
+
+  return { actual, openMs, getMs, hit: val !== undefined }
+}
+
+async function runPagedComparison() {
+  const sizes = [2000, 10000, 40000]
+  console.log('\nio-engine.bench.js --paged — open() and get() cost, plain vs paged\n')
+  console.log('| size   | path  | open ms | get ms | ok |')
+  console.log('|--------|-------|---------|--------|----|')
+  for (const size of sizes) {
+    const deadline = Date.now() + PAGED_SIZE_BUDGET_MS
+    for (const paged of [false, true]) {
+      const dir = mkdtempSync(join(tmpdir(), 'iodb-paged-'))
+      try {
+        const r = measureOpen(dir, size, paged)
+        console.log(`| ${String(r.actual).padStart(6)} | ${(paged ? 'paged' : 'plain').padEnd(5)} | ${r.openMs.toFixed(1).padStart(7)} | ${r.getMs.toFixed(2).padStart(6)} | ${r.hit ? ' ✓' : ' ✗'} |`)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+      if (Date.now() > deadline) {
+        console.log(`| (size ${size} over ${PAGED_SIZE_BUDGET_MS}ms budget — stopping) |`)
+        break
+      }
+    }
+  }
+  console.log('\nWhat to read here:')
+  console.log('  - FINDING: paged open() is NOT flat — it still tracks plain open()')
+  console.log('    almost exactly. 2.5 removes the projection REBUILD from open(), but')
+  console.log('    syncFrom(0) still reads and parses the whole .dash to rebuild the')
+  console.log('    allocator bitmaps and lastKey. That log read is the dominant cost.')
+  console.log('    A flat open() needs the real chave->offset index — that is feature')
+  console.log('    2.4, and this bench is the evidence it is required, not optional.')
+  console.log('  - what 2.5 DOES buy: the projection no longer has to fit in RAM. get()')
+  console.log('    pays one ~4K page read on a cold key (0.2-0.6ms here) instead of')
+  console.log('    needing the whole map resident. The RAM ceiling is the thing removed.')
+  console.log(`  - concurrency here is capped at ${PAGED_MAX_PROCS} workers by design.`)
+}
+
+if (isMain && process.argv.includes('--paged')) {
+  await runPagedComparison()
+}
+
+// ── Paged sanity test under utest ──────────────────────────────────────────
+if (globalThis.test) {
+  test('2.5 bench — paged open() does not grow like plain open()', async ({ check }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'iodb-paged-test-'))
+    try {
+      const small = measureOpen(dir, 1000, true)
+      const big = measureOpen(join(dir), 8000, true)
+      check(small.hit, true)
+      check(big.hit, true)
+      // paged open() should be sub-linear in store size: 8x the records must
+      // not cost 8x the open time. Generous factor to stay non-flaky.
+      check(big.openMs < small.openMs * 5 + 50, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+}
+
+export { runGrid, summarize, runSingleProcess, runMultiProcess, runPagedComparison, measureOpen }

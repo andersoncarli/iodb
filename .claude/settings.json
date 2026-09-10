@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sprint *)",
+      "Bash(utest *)",
+      "Bash(bun *)"
+    ]
+  }
+}

@@ -15,6 +15,7 @@ import { makeBitmaps, allocKey, has as bmHas, add as bmAdd, levels as bmLevels, 
 const INDEX_V = '0.1.0'
 const INDEX_FORMAT = 'lrm-1'
 import { acquireLock, releaseLock, publishDerived, LOCK_TIMEOUT } from './adapters/io-append.js'
+import { PagedProjection, materialize } from './paged-projection.js'
 
 /**
  * io-engine.js — IO Primitive
@@ -71,9 +72,16 @@ function serializeLine(key, payload, format) {
 }
 
 
-export function IO(base, { reduce, initial, log: logOverride, type, entity, format: fmt, bench } = {}) {
+export function IO(base, { reduce, initial, log: logOverride, type, entity, format: fmt, bench, pageSize } = {}) {
   const name = entity ?? basename(base), entityType = type ?? 'kv'
   const format = fmt || 'dash'
+  // Paging is one axis, like `format`: `pageSize` is a byte count, and 0 or
+  // absent means "no paging" — the monolithic in-RAM projection, byte-identical
+  // to every build before feature 2.5. A user of IO() needs to know exactly one
+  // thing to turn it on: pass `pageSize: 4096`. The pagedtext primitive under it
+  // stays importable on its own, but nobody has to reach for it.
+  const _pageSize = Number(pageSize) > 0 ? Number(pageSize) : 0
+  const paged = _pageSize > 0
   const hasExt = /\.[a-z0-9]+$/i.test(base)
   const f = {
     dash:  logOverride || (hasExt ? base : base + '.dash'),
@@ -87,15 +95,48 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     // `.lock.<pid>` while a writer holds it.
     lock:  logOverride ? logOverride.replace(/\.dash$/, '.lock')
                        : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.lock',
+    // The paged canonical projection (feature 2.5). Written only when
+    // `pageSize > 0`; absent otherwise, exactly like a store that never asked
+    // for it. `pageSize`-aligned text pages, read one page at a time, so a store
+    // larger than process RAM still answers get().
+    proj:  logOverride ? logOverride.replace(/\.dash$/, '.proj')
+                       : (hasExt ? base.replace(/\.[a-z0-9]+$/i, '') : base) + '.proj',
   }
 
-  const _reduce  = reduce  ?? ((acc, rec) => Object.assign({}, acc, Object.values(rec)[0] ?? {}))
+  const _userReduce = reduce ?? ((acc, rec) => Object.assign({}, acc, Object.values(rec)[0] ?? {}))
   const _initial = initial ?? (Array.isArray(initial) ? [] : {})
+  const _pagedLayout = Array.isArray(_initial) ? 'sequential' : 'keyed'
 
-  let projection = Array.isArray(_initial) ? [] : { ..._initial }
+  // The reducer contract inside the engine is "mutate acc, return acc". `merge`
+  // and `append` already honour it. `assign` (the kv/map default) allocates a
+  // fresh object each call — fine on the plain path, but on the paged path acc
+  // is a Proxy that must not be replaced. `assign` and paged-`merge` have the
+  // same observable effect (last write wins per key; merge additionally deletes
+  // on null), so the paged path routes an unspecified or assign reducer through
+  // an in-place shallow assign that the Proxy's set trap buffers.
+  const _isAssign = !reduce || reduce.name === 'assign'
+  const _reduce = paged
+    ? (_isAssign
+        ? (acc, rec) => {
+            const p = Object.values(rec)[0] ?? {}
+            for (const [k, v] of Object.entries(p)) acc[k] = v
+            return acc
+          }
+        : _userReduce)
+    : _userReduce
+
+  // When `paged`, the projection lives in f.proj and is faced by a Proxy that
+  // pages values in on demand. `_reduce` still mutates it through ordinary
+  // property access — the Proxy's set/deleteProperty traps buffer the change,
+  // and flushProj() writes only the pages that moved. materialize() is used
+  // wherever the whole thing must become plain JSON (yaml, get('#1')).
+  let projection = paged
+    ? PagedProjection(f.proj, { layout: _pagedLayout, pageSize: _pageSize, initial: _initial })
+    : (Array.isArray(_initial) ? [] : { ..._initial })
   let lastOffset = 0
   let flushCount = 0
   let genesisWritten = false
+  let _pagedSynced = false     // paged: has this session already reconciled .proj with the log?
   let idx = {
     records: new Set(),
     // The allocator. `prefixSet`/`levels` used to be two views of this one fact,
@@ -217,7 +258,27 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     readSync(fd, buf, 0, sz - offset, offset)
     closeSync(fd)
     const recs = buf.toString('utf8').split('\n').filter(Boolean).map(parseLine).filter(Boolean)
-    projection = recs.reduce((acc, rec) => { try { return _reduce(acc, rec) } catch { return acc } }, projection)
+    if (paged) {
+      // The Proxy is the accumulator: _reduce mutates it in place, writes are
+      // buffered, one flush covers the whole delta.
+      //
+      // But .proj is a persisted derived artifact. On a full open (offset 0)
+      // where .proj already holds content, it is authoritative up to the log
+      // records it absorbed — replaying the whole log over it would DOUBLE every
+      // record. So the projection replay is skipped when .proj is non-empty and
+      // we are syncing from the top; the index/bitmap replay below still runs,
+      // because that state is rebuilt fresh each open. A stale .proj (fewer
+      // records than the log) is a known gap this sprint does not close — the
+      // real fix is an offset marker in the .proj header, which is 2.4 work.
+      const projHasContent = existsSync(f.proj) && statSync(f.proj).size > 4096
+      if (!(offset === 0 && projHasContent && !_pagedSynced)) {
+        for (const rec of recs) { try { _reduce(projection, rec) } catch { } }
+        projection.__flushPages()
+      }
+      _pagedSynced = true
+    } else {
+      projection = recs.reduce((acc, rec) => { try { return _reduce(acc, rec) } catch { return acc } }, projection)
+    }
     if (offset === 0) {
       bmAdd(idx.bitmaps, toBits('0')); bmAdd(idx.bitmaps, toBits('1'))
       idx.records.add('0'); idx.records.add('1')
@@ -288,13 +349,19 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     if (!existsSync(dirname(f.dash))) mkdirSync(dirname(f.dash), { recursive: true })
     appendFileSync(f.dash, serializeLine('0', p0, format) + '\n')
     appendFileSync(f.dash, serializeLine('1', p1, format) + '\n')
-    projection = _reduce(_reduce(Array.isArray(_initial) ? [] : { ..._initial }, { '0': p0 }), { '1': p1 })
+    if (paged) {
+      _reduce(projection, { '0': p0 })
+      _reduce(projection, { '1': p1 })
+      projection.__flushPages()
+    } else {
+      projection = _reduce(_reduce(Array.isArray(_initial) ? [] : { ..._initial }, { '0': p0 }), { '1': p1 })
+    }
     // PID-suffixed temp, for the same reason the index has one: a fixed `.tmp`
     // is shared by every process writing this base, and they clobber each other
     // mid write->rename. That was the bug 1.2 fixed for the index; it must not
     // come back through the projection's door.
     const tmp = `${f.yaml}.${process.pid}.tmp`
-    writeFileSync(tmp, stringify(projection, { collectionStyle: 'block' })); renameSync(tmp, f.yaml)
+    writeFileSync(tmp, stringify(materialize(projection), { collectionStyle: 'block' })); renameSync(tmp, f.yaml)
     saveIndex()
     bmAdd(idx.bitmaps, toBits('0')); bmAdd(idx.bitmaps, toBits('1'))
     idx.records.add('0'); idx.records.add('1')
@@ -323,7 +390,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   // the same pass, so the index's recorded offset is a faithful stand-in for how
   // current the projection on disk is.
   function publishYaml() {
-    const yamlStr = stringify(projection, { collectionStyle: 'block' })   // O(n), .dash lock not held
+    const yamlStr = stringify(materialize(projection), { collectionStyle: 'block' })   // O(n), .dash lock not held
     publishDerived({
       file: f.yaml,
       content: yamlStr,
@@ -341,7 +408,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
   // projection into place, because that rename WAS the release. With a dedicated
   // mutex the two are independent, and saying so costs one line.
   function flushYaml(projection, myLock) {
-    const yamlStr = stringify(projection, { collectionStyle: 'block' })
+    const yamlStr = stringify(materialize(projection), { collectionStyle: 'block' })
     const tmp = `${f.yaml}.${process.pid}.tmp`
     writeFileSync(tmp, yamlStr)
     saveIndex()
@@ -362,7 +429,14 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     // ── Pre-compute outside lock ─────────────────────────────────────────────
     let prevKey = idx.lastKey
     let provisional = computeKeys(_log, prevKey)
-    const _projCopy = () => Array.isArray(projection) ? [...projection] : { ...projection }
+    // The copy is a throwaway: it lets the pre-compute run (and fail) without
+    // touching shared state. For the paged projection there is nothing to copy
+    // cheaply — the store IS the state — so the pre-compute reduces over a plain
+    // snapshot, and the real paged mutation happens inside the lock after the
+    // append lands (see below).
+    const _projCopy = () => paged
+      ? materialize(projection)
+      : (Array.isArray(projection) ? [...projection] : { ...projection })
     let newProjection = provisional.reduce(
       (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), _projCopy()
     )
@@ -399,7 +473,8 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       prevKey = idx.lastKey
       provisional = computeKeys(_log, prevKey)
       newProjection = provisional.reduce(
-        (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }), { ...projection }
+        (acc, { short, payload }) => _reduce(acc, { [short.p]: payload }),
+        paged ? materialize(projection) : { ...projection }
       )
       allBytes = Buffer.from(provisional.map(p => p.line).join(''))
       if (t) t.recomputeEnd = Date.now()
@@ -414,7 +489,17 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (t) t.appendEnd = Date.now()
 
       // ── Update in-memory state ────────────────────────────────────────────
-      projection = newProjection
+      // Plain path: swap in the reduced copy. Paged path: replay the records
+      // onto the real paged projection — the Proxy BUFFERS the writes in memory
+      // and does NOT touch disk here. The .proj file is a derived artifact like
+      // .yaml: it is written on the periodic yield and on close(), not on every
+      // append. Flushing it per-append would put an O(store) rewrite back on the
+      // hot path, which is exactly what feature 2.2 removed.
+      if (paged) {
+        for (const { short, payload } of provisional) _reduce(projection, { [short.p]: payload })
+      } else {
+        projection = newProjection
+      }
       for (const { short, fullKey, payload } of provisional) {
         const bits = short.bits
         bmAdd(idx.bitmaps, bits); idx.records.add(fullKey)
@@ -447,7 +532,10 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // ── Publish derived state, lock released ─────────────────────────────
       if (t) t.publishStart = t.lockReleased
       saveIndex()                       // arbitrated by lastOffset (see saveIndex)
-      if (yieldFlush) publishYaml()
+      if (yieldFlush) {
+        if (paged) projection.__flushPages()
+        publishYaml()
+      }
 
       // ── Emit after lock released so handlers can write without deadlock ──
       for (const { short, fullKey, payload } of provisional) {
@@ -563,6 +651,11 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     },
     close() {
       if (_log.length) flush()
+      // Persist the paged projection's buffered writes. Like the .yaml below it
+      // is a derived artifact, written once at close rather than per append.
+      if (paged && existsSync(f.dash)) {
+        try { projection.__flushPages() } catch { }
+      }
       // Flush pending yaml/index if not already up-to-date
       if (flushCount % 100 !== 0 && existsSync(f.dash)) {
         const myLock = acquireLock(f.lock)

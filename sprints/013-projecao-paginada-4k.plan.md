@@ -187,3 +187,114 @@ Os docs descrevem bem mais do que 2.5 pede. Nao entra neste sprint:
 - **o padding sobrevive a um editor que remove trailing spaces** (doc 05);
 - **pagina cheia cristaliza** e a posicao resolve a identidade (doc 03);
 - suite verde, sem regressao no bench de escrita (2.1).
+
+## Regras dos benchmarks (restricao do usuario)
+
+- **localizados**: cada bench mede UMA operacao (open, get-miss, escrita, range),
+  nao um cenario inteiro;
+- **time-bounded**: orcamento de tempo explicito por caso, aborta ao estourar;
+- **no maximo 3 workers concorrentes** — igual aos benches de 2.1 / 3.3.
+
+## Resultado (2026-09-10) — 🟢 avaliada, 16/16 passos do eval verdes
+
+### Entregue
+
+- **`pagedtext/pagedtext.js`** reescrito: nucleo sincrono, header versionado
+  (`PAGEDTEXT` v2) na pagina 0, paginas 4096 alinhadas com `writeSync`
+  posicionado, cache de paginas visitadas (`Map<pageIndex, {lines, dirty}>`).
+  Interface publica preservada. Migra texto legado sem header no primeiro open.
+- **`src/paged-projection.js`** novo: `PagedProjection` — Proxy sobre store
+  paginado, dois layouts (`keyed` sorted-by-key para merge/assign, `sequential`
+  por posicao para append). Traps get/set/has/ownKeys/deleteProperty +
+  `materialize()` para snapshot JSON. Cache LRU de 64 paginas (~256KB teto).
+- **`src/io-engine.js`**: parametro `pageSize: N` (0 ou ausente = plain, byte-identico). `f.proj` e artefato
+  derivado (como `.yaml`): escrito no yield periodico e em `close()`, NUNCA por
+  append — senao o rewrite O(store) volta pra hot path que a 2.2 esvaziou.
+  Bug pre-existente corrigido: `_projCopy()` / `materialize()` cobrem array e
+  objeto.
+- **Testes** (novos, na convencao da suite): `pagedtext/pagedtext.t.js` (45),
+  `src/paged-projection.t.js` (29), `src/io-engine.paged.t.js` (17). Suite:
+  16 arquivos/308 → 19/399. `pagedtext/test.js` removido (fora da convencao).
+- **`pagedtext/stress.mjs`**: gera `project.listing.md` (~2.3MB, 60k linhas),
+  exercita toda a API, verifica alinhamento 4K, cache, cursor, mutacoes,
+  sobrevivencia a `sed s/ *$//`. Passa em ~620ms (budget 15s).
+- **`src/io-engine.bench.js --paged`**: comparacao open()/get() plain vs paged,
+  3 workers max, time-bounded por tamanho.
+
+### Achados (o goal pede: "onde nao for rapido, o bench mostra")
+
+1. **paged open() NAO e flat.** Mede 23 / 136 / 641 ms a 2k / 10k / 34k chaves —
+   quase identico ao plain. 2.5 tira o REBUILD da projecao do open(), mas
+   `syncFrom(0)` ainda le e parseia o `.dash` inteiro pra reconstruir os
+   bitmaps do alocador e o `lastKey`. Esse read do log domina. **open() flat
+   exige o indice chave->offset real — e a feature 2.4.** O bench e a evidencia
+   de que 2.4 e requisito, nao opcional.
+2. **O que 2.5 entrega de fato:** a projecao deixou de precisar caber na RAM.
+   `get()` numa chave fria paga um read de ~4K (0.2-0.6ms) em vez de exigir o
+   mapa inteiro residente. O teto de RAM e a coisa removida.
+3. **Escrita paginada e O(store), nao O(paginas sujas)** ainda. `__flushPages()`
+   reescreve o arquivo todo. Mitigado tirando o flush da hot path (so no
+   yield/close), mas o commit por regiao e trabalho posterior (Planner, Phase 2
+   do roadmap do pagedtext).
+4. **`.proj` stale.** Reabrir um store cujo `.proj` tem menos registros que o
+   `.dash` nao reconcilia o delta — o replay do log inteiro sobre o `.proj`
+   dobraria registros, entao e pulado quando `.proj` tem conteudo. O fix certo
+   e um marcador de offset no header do `.proj`, que e 2.4.
+
+### Decisao registrada para 2.4
+
+Spike (B-tree propria vs `bun:sqlite`) resolvido sem medicao a favor de paginas
+de texto proprias — 11 docs de `pagedtext/docs/` convergem (cat/grep, Node+Bun,
+`.dash` ja e o WAL). Ver `plans/2-pages/2.4-indice-paginado-4k.md`.
+A "cadeia de patches" NAO e mecanismo separado: e o proprio indice de valores
+append-only. Um sprint, uma coisa.
+
+## Ajuste de interface (decisao do usuario, dentro do 013)
+
+A ativacao da paginacao e UM eixo em `IO()`: `pageSize: N`. `N > 0` liga com
+esse tamanho de pagina; `0` ou ausente = projecao monolitica em RAM, o caminho
+de sempre, byte-identico. A flag booleana `paged` some da assinatura publica
+(vira um derivado interno `_pageSize > 0`).
+
+Justificativa:
+
+- **um valor carrega os dois fatos** — ligado/desligado e o tamanho — em vez de
+  um booleano com `4096` escondido por dentro. Igual a `format`.
+- **o default e a ausencia, e a ausencia e o hoje** — as 11 features confirmadas
+  nunca passam `pageSize`, entao nunca tocam o caminho paginado. O 🟢 do 2.5 nao
+  regride.
+- **`pagedtext` permanece um primitivo independente** — importavel, testavel
+  isolado, com README e ROADMAP proprios. O que muda e so o que o usuario do
+  iodb precisa saber: passar `pageSize: 4096`. Nao precisa saber que
+  `pagedtext` existe como arquivo, nem importar `PagedProjection`, nem entender
+  kinds/filling.
+- **paginacao vira propriedade do store**, nao um modo de operacao: "este store
+  e paginado em 4K" mora no mesmo lugar que "este store e jsonl".
+
+`sprint eval 2.5 --yes` reavaliado apos o ajuste: 18/18 verdes.
+
+## Achado fora de escopo (reportado, NAO consertado) — `state()` de store `append`
+
+`state()` / `get('#1')` de um store criado com `reduce: append` retorna apenas
+o ULTIMO registro (`[{"5":{"ev":"b"}}]`), nao a lista acumulada. Reproduzido no
+`main` limpo, sem nenhuma mudanca deste sprint — e pre-existente.
+
+`records()` tem todos os registros; a projecao `append` os perde. Causa
+provavel: `append = (acc, rec) => (acc ?? []).push ? (acc.push(rec), acc) : [rec]`
+recebe `acc` sem `.push` em algum ponto de `flush`/`syncFrom` e cai no ramo
+`[rec]`, recriando o array com so o registro atual.
+
+E da frente 1 (core), nao da 2.5. Merece sprint proprio. O README foi ajustado
+para nao afirmar nada sobre `state()` de `append` — descreve leitura via
+`records()`, que funciona.
+
+## README reescrito (decisao do usuario, incluido no 013)
+
+`README.md` reescrito como a versao io-engine de `nutshell/io-nutshell.md`:
+mesma estrutura seccao-por-conceito, tom code-first, pressupoe que o leitor
+conhece event sourcing e o nutshell. Descreve o que o io-engine acrescenta
+sobre o nutshell: a triade `.dash`/`.yaml`/`.index`, o indice real de nomes, o
+lockfile de presenca dedicado, e a projecao paginada opt-in via `pageSize: N`.
+Todos os exemplos de codigo foram rodados e batem com o comportamento real
+(incluindo o fato de que `get()`/`state()` sob `merge` dobram o genesis na
+projecao). Sem numeros de benchmark nao medidos.
