@@ -1,0 +1,26 @@
+SOURCE:
+  targets:
+    - "./example"
+  include:
+    - "**/*.ts"
+  exclude:
+    - "**/node_modules/**"
+
+TESTS:
+  targets:
+    - "./example"
+  include:
+    - "**/*.test.ts"
+
+DOCS:
+  targets:
+    - "./example"
+  include:
+    - "**/*.md"
+
+IGNORE:
+  targets:
+    - "./example"
+  include:
+    - "**/node_modules/**"
+    - "**/.git/**"
