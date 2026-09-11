@@ -2,7 +2,7 @@
 front: 5
 keyword: refactorings
 title: Refactorings — mudancas de forma que nao mudam comportamento
-state: active
+state: confirmed
 updated: 2026-09-10
 ---
 # [5] refactorings — mudancas de forma que nao mudam comportamento
