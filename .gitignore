@@ -10,3 +10,4 @@ project.listing.md
 
 # fswatch metadata stores (one domain per project)
 .fswatch/
+archive/
