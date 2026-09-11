@@ -2,7 +2,7 @@
 front: 2
 keyword: pagedtext
 title: pagedtext — o primitivo paginado sob stream, projecao e indice
-state: active
+state: confirmed
 updated: 2026-09-10
 ---
 # [2] pagedtext — o primitivo paginado sob stream, projecao e indice

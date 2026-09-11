@@ -18,6 +18,7 @@ import { Database } from 'bun:sqlite'
 import { existsSync } from 'fs'
 import { dirname } from 'path'
 import { mkdirSync } from 'fs'
+import { registerIndex } from '../index-registry.js'
 
 const sqlType = v =>
   typeof v === 'number' ? (Number.isInteger(v) ? 'INTEGER' : 'REAL') : 'TEXT'
@@ -197,3 +198,69 @@ export function SqliteCollection(filePath, opts = {}) {
 
 export const extensions = ['sqlite', 'db']
 export default SqliteCollection
+
+registerIndex('sqlite', SqliteIndex)
+
+/**
+ * Implementacao do contrato de indice (src/index-contract.js) usando bun:sqlite
+ * como motor chave->offset. Tabela dedicada `idx`, id TEXT PRIMARY KEY — a
+ * mesma B-tree nativa medida no spike da 2.4 (fast-open e range em ordens de
+ * grandeza mais rapido que o replay do .dash; ver plans/2-pagedtext/2.4.spike.js).
+ *
+ * Nao reusa SqliteCollection porque o formato aqui e mais estreito (chave ->
+ * offset numerico, nao linha arbitraria) — reusar forcaria JSON.stringify/parse
+ * de um offset, custo que o contrato nao pede.
+ */
+export function SqliteIndex(filePath, opts = {}) {
+  let db = null
+
+  return {
+    open() {
+      if (db) return
+      if (filePath && filePath !== ':memory:') {
+        const dir = dirname(filePath)
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+      }
+      db = new Database(filePath || ':memory:', { create: true })
+      db.run('CREATE TABLE IF NOT EXISTS idx (key TEXT PRIMARY KEY, offset INTEGER)')
+    },
+
+    close() {
+      if (db) db.close()
+      db = null
+    },
+
+    get(key) {
+      const row = db.query('SELECT offset FROM idx WHERE key = ?').get(key)
+      return row ? row.offset : undefined
+    },
+
+    put(key, offset) {
+      db.run(
+        'INSERT INTO idx (key, offset) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET offset=excluded.offset',
+        [key, offset]
+      )
+    },
+
+    del(key) {
+      db.run('DELETE FROM idx WHERE key = ?', [key])
+    },
+
+    * range(lo, hi) {
+      const rows = db.query('SELECT key, offset FROM idx WHERE key >= ? AND key <= ? ORDER BY key').all(lo, hi)
+      for (const r of rows) yield [r.key, r.offset]
+    },
+
+    rebuild(fromOffset, records) {
+      db.run('DELETE FROM idx WHERE 1=1')
+      db.run('BEGIN')
+      try {
+        for (const { key, offset } of records) this.put(key, offset)
+        db.run('COMMIT')
+      } catch (e) {
+        db.run('ROLLBACK')
+        throw e
+      }
+    }
+  }
+}
