@@ -22,10 +22,19 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
 - [sprint] `docs-check.js` loop da raiz nao filtra diretorios; um dir `.md` na raiz crasha
   `EISDIR` — [ISSUES/002](ISSUES/002-sprint-close-docs-check-eisdir.md)
 - [utest] dois caminhos posicionais: so o primeiro roda, em silencio — `UTEST-ISSUE.md`
-- [iodb] guarda de replay do `.proj` usa literal `4096`, nao o `pageSize`; duplica a
-  projecao ao reabrir com pagina < 4096 — `PROJ-REPLAY-ISSUE.md`
 - [sprint] politica: `ISSUES.md` como registro de QA/kanban deveria ser parte do metodo
   (proposto nesta thread; nao implementado)
+- [sprint] `sprint close` grava `.git/SPRINT_COMMIT_MSG` do sprint ANTERIOR: a saida imprime o
+  titulo certo e o arquivo tem outro — quem segue o `git commit -F` que o tool sugere
+  commita com o titulo errado — [usecases/15-IODB-2.md](../sprint-cli/docs/usecases/15-IODB-2.md)
+- [sprint] `sprint close` bumpa versao no `package.json` mesmo num sprint que so mexeu em
+  `plans/`+`sprints/` — derivar do que foi encenado, ou `--no-bump` visivel
+- [sprint] `sprint feature new` semeia `verify_tests: [utest .]`, que nao e comando valido em
+  lugar nenhum — semear do campo `test` do `.sprint/config.json`
+- [sprint] `.sprint/config.json` tem `bun utest/utest.js .` sem o `../` — `sprint test` nunca
+  roda neste projeto; reportado em `usecases/14-IODB.md` e ainda aberto
+- [sprint] `sprint doctor` nao verifica que o comando de `test` resolve — um `test` quebrado e
+  indistinguivel de um `test` nunca rodado (reforca o item acima)
 
 ## DOING
 
@@ -37,4 +46,7 @@ _(vazio)_
 
 ## DONE
 
-_(vazio — itens resolvidos saem daqui)_
+- [iodb] guarda de replay do `.proj` usava literal `4096` em vez do `pageSize`, e duplicava
+  a projecao ao reabrir com pagina menor — resolvido na feature 4.5 (sprint 022): o guarda
+  virou comparacao de `logOffset`, e o `.proj` atrasado passou a recuperar o delta em vez
+  de perde-lo — [ISSUES/PROJ-REPLAY-ISSUE.md](ISSUES/PROJ-REPLAY-ISSUE.md)
