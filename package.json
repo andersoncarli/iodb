@@ -5,7 +5,7 @@
   "main": "src/db.js",
   "type": "module",
   "scripts": {
-    "test": "bun ../utest/utest.js ."
+    "test": "utest ."
   },
   "repository": {
     "type": "git",

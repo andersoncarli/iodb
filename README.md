@@ -173,18 +173,19 @@ nutshell/
 
 ---
 
-## Dependencies (workspace peers, not submodules)
+## Dependencies (workspace peer + installed CLI)
 
-This repo expects `../utils` and `../utest` as sibling directories — it does not vendor them or bring them as git submodules:
+This repo expects `../utils` as a sibling directory — it does not vendor it or bring it as a git submodule:
 
 ```
 any/folder/
   utils/   ← git clone git@github.com:andersoncarli/utils.git
-  utest/   ← git clone git@github.com:andersoncarli/utest.git
   iodb/    ← this repo
 ```
 
-`iodb/src/*.js` imports from `../utils/src/...` (the event bus); tests run via `bun ../utest/utest.js .`. Cloning `iodb` alone is not enough — clone all three side by side. When `iodb` is a submodule of a host project (e.g. `bot/`), that host must carry `utils` and `utest` as siblings at the same level.
+`iodb/src/*.js` imports from `../utils/src/...` (the event bus). Cloning `iodb` alone is not enough for that import to resolve — clone `utils` alongside it. When `iodb` is a submodule of a host project (e.g. `bot/`), that host must carry `utils` as a sibling at the same level.
+
+Tests run via the `utest` CLI (git clone `git@github.com:andersoncarli/utest.git`, then `cd utest && bun link` to put it on `PATH`) — `utest .` at the repo root, `utest fswatch.t.js --force` inside `fswatch/`. `utest` is a peer tool, not a sibling directory: it is resolved from `PATH`, so subpackages like `fswatch/` can run their suite regardless of where the repo is cloned or which directory the command runs from.
 
 ---
 

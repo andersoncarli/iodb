@@ -16,7 +16,7 @@
 // Usage:
 //   bun io-engine.bench.js            — run the full 6-point grid, print table
 //   bun io-engine.bench.js --quick    — 1k×1 and 1k×8 only, for fast iteration
-//   bun ../utest/utest.js io-engine.bench.js --force   — runs the sanity test below
+//   utest io-engine.bench.js --force   — runs the sanity test below
 //
 // The instrumentation lives in io-engine.js's flush(), behind an optional
 // `bench` callback passed to IO(). When absent (normal use, and every other
@@ -241,7 +241,7 @@ async function runGrid(sizes, concurrencies, writesPerCell) {
 }
 
 // ── CLI entry point ─────────────────────────────────────────────────────────
-// Guarded so `bun ../utest/utest.js io-engine.bench.js` (which imports this
+// Guarded so `utest io-engine.bench.js` (which imports this
 // file for the sanity test below) does not also run the whole grid.
 const isMain = import.meta.main
 if (isMain && !process.argv.includes('--paged')) {
@@ -271,7 +271,7 @@ if (isMain && !process.argv.includes('--paged')) {
 }
 
 // ── Sanity test: instrumentation must not change engine behaviour ──────────
-// Runs under utest (bun ../utest/utest.js io-engine.bench.js --force).
+// Runs under utest (utest io-engine.bench.js --force).
 if (globalThis.test) {
   test('4.1 bench — phase marks sum to <= wall time, instrumentation is inert', async ({ check }) => {
     const dir = mkdtempSync(join(tmpdir(), 'iodb-bench-test-'))

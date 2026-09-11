@@ -41,6 +41,10 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
 - [iodb] `src/fixtures/tabular-pre-8.2.csv` foi gerado sem `pageSize` pequeno e virou 2633
   linhas de enchimento de pagina — regenerado (30 linhas), mas ainda STAGED, nao commitado
   — decisao pendente do usuario — [ISSUES/004](ISSUES/004-fixture-tabular-pre-8-2-tamanho.md)
+- [iodb] `renderPage()` do pagedtext repete uma unidade pequena de enchimento (` ,\n`) em
+  vez de um unico campo largo — proposta do usuario, FORA do escopo de qualquer sprint
+  aberto (mexe em nucleo compartilhado por 6 features ja 🔵); precisa de sprint proprio na
+  frente 2 se for adiante — [ISSUES/006](ISSUES/006-pagedtext-fill-unidade-repetida.md)
 
 ## DOING
 

@@ -42,7 +42,7 @@ eval("bun plans/6-fswatch/6.1.probe.js", (out) => {
 //    dois testes que o SQLite nunca teve: o flip dir<->file sem `size`
 //    residual (a armadilha do `merge` raso) e as duas fabricas respondendo a
 //    mesma interface.
-eval("bun ../utest/utest.js fswatch/fswatch.t.js --force", (out) => {
+eval("utest fswatch/fswatch.t.js --force", (out) => {
   check(out.includes('14'))
   check(!out.includes('✘'))
 })

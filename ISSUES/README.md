@@ -26,6 +26,8 @@ frase do defeito, depois `## Sintoma`, `## Diagnostico` (arquivo:linha da causa)
   fixture da 8.2 gerado sem `pageSize` pequeno virou 2633 linhas de enchimento.
 - [005-fixture-desaparece-intermitente.md](005-fixture-desaparece-intermitente.md) —
   o mesmo fixture sumiu do disco duas vezes sem causa isolada.
+- [006-pagedtext-fill-unidade-repetida.md](006-pagedtext-fill-unidade-repetida.md) —
+  proposta: enchimento de pagina como um unico campo largo, nao unidade repetida.
 
 Writeups anteriores, ainda na raiz do repo (mesmo espirito, pre-datam este diretorio):
 
