@@ -51,17 +51,23 @@ export function parseSchema(line) {
     if (colon === -1) throw new Error(`coluna sem tipo: ${JSON.stringify(decl)}`)
     const name = decl.slice(0, colon).trim()
     let rest = decl.slice(colon + 1).trim()
-    let nullable = false, indexed = false
+    let nullable = false, indexed = false, pk = false, unique = false
     // Os sufixos saem do fim, um de cada vez, para que a ordem entre eles nao
-    // importe. O que sobra tem que ser o tipo inteiro — nao um prefixo dele.
+    // importe. Quatro eixos independentes agora: ?/@/!/= em qualquer ordem. O
+    // que sobra tem que ser o tipo inteiro — nao um prefixo dele.
     for (;;) {
       if (rest.endsWith('?')) { nullable = true; rest = rest.slice(0, -1) }
       else if (rest.endsWith('@')) { indexed = true; rest = rest.slice(0, -1) }
+      else if (rest.endsWith('!')) { pk = true; rest = rest.slice(0, -1) }
+      else if (rest.endsWith('=')) { unique = true; rest = rest.slice(0, -1) }
       else break
     }
     if (!name) throw new Error(`coluna sem nome: ${JSON.stringify(decl)}`)
     if (!TYPES.has(rest)) throw new Error(`tipo desconhecido: ${JSON.stringify(rest)}`)
-    return { name, type: rest, nullable, indexed }
+    const col = { name, type: rest, nullable, indexed }
+    if (pk) col.pk = true
+    if (unique) col.unique = true
+    return col
   })
   const seen = new Set()
   for (const c of cols) {
@@ -73,7 +79,7 @@ export function parseSchema(line) {
 
 export function formatSchema(cols) {
   return cols.map(c =>
-    `${csvField(c.name)}:${c.type}${c.nullable ? '?' : ''}${c.indexed ? '@' : ''}`
+    `${csvField(c.name)}:${c.type}${c.nullable ? '?' : ''}${c.indexed ? '@' : ''}${c.pk ? '!' : ''}${c.unique ? '=' : ''}`
   ).join(',')
 }
 
@@ -278,6 +284,24 @@ export function TabularProjection(file, { schema, pageSize = PAGE_SIZE } = {}) {
     get schema() { return cols.map(c => ({ ...c })) },
     get pageCount() { return store.pageCount() },
     get pagesRead() { return pagesRead },
+
+    // Internals para quem constroi capacidade EM CIMA da projecao (8.4: a
+    // Table de nivel 3) sem duplicar o decode nem o indice por pagina.
+    // Mesmo padrao de `_store` que PagedText() ja expoe.
+    _store: store,
+    _pageRows: pageRows,
+    _ensureFlushed: () => flushIfPending(),
+    _resetPagesRead: () => { pagesRead = 0 },
+    _bumpPagesRead: () => { pagesRead++ },
+
+    /** Soma das contagens por pagina do INDICE — nunca abre pagina. O(paginas
+     *  do indice), nao O(linhas): e o que deixa count() ser O(1) leitura. */
+    rowCount() {
+      flushIfPending()
+      let n = 0
+      for (const page of index) n += page.n
+      return n
+    },
 
     push(row) { pending.push(row); return api },
     flush() { flush(); return api },
