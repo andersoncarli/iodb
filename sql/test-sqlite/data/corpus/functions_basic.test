@@ -1,0 +1,19 @@
+# Scalar functions + CASE
+statement ok
+CREATE TABLE t7(s TEXT, n INTEGER);
+
+statement ok
+INSERT INTO t7 VALUES('Hello', 5);
+INSERT INTO t7 VALUES('World', -3);
+
+query TI
+SELECT UPPER(s), ABS(n) FROM t7 ORDER BY s;
+----
+HELLO 5
+WORLD 3
+
+query T
+SELECT CASE WHEN n > 0 THEN 'pos' ELSE 'neg' END FROM t7 ORDER BY n;
+----
+neg
+pos

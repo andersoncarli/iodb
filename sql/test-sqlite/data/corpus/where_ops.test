@@ -1,0 +1,25 @@
+# WHERE + logical operators
+statement ok
+CREATE TABLE t2(x INTEGER, y INTEGER);
+
+statement ok
+INSERT INTO t2 VALUES(1, 10);
+INSERT INTO t2 VALUES(2, 20);
+INSERT INTO t2 VALUES(3, 30);
+INSERT INTO t2 VALUES(NULL, 40);
+
+query II
+SELECT x, y FROM t2 WHERE x > 1 AND y < 30;
+----
+2 20
+
+query II
+SELECT x, y FROM t2 WHERE x IS NULL;
+----
+NULL 40
+
+query II
+SELECT x, y FROM t2 WHERE x BETWEEN 1 AND 2 ORDER BY x;
+----
+1 10
+2 20

@@ -1,0 +1,101 @@
+{
+  "generatedAt": "2026-09-11T20:16:27.593Z",
+  "features": [
+    {
+      "name": "basic",
+      "order": 10,
+      "description": "CREATE/INSERT/SELECT simples, tipos, literais, expressões aritméticas básicas",
+      "count": 1
+    },
+    {
+      "name": "where",
+      "order": 20,
+      "description": "WHERE, operadores de comparação e lógicos (AND/OR/NOT), IS NULL",
+      "count": 1
+    },
+    {
+      "name": "order_limit",
+      "order": 30,
+      "description": "ORDER BY, LIMIT, OFFSET, DISTINCT",
+      "count": 1
+    },
+    {
+      "name": "update_delete",
+      "order": 40,
+      "description": "UPDATE e DELETE",
+      "count": 1
+    },
+    {
+      "name": "aggregate",
+      "order": 50,
+      "description": "Funções de agregação, GROUP BY, HAVING",
+      "count": 1
+    },
+    {
+      "name": "join",
+      "order": 60,
+      "description": "INNER/LEFT/RIGHT/CROSS/FULL JOIN, self-joins",
+      "count": 1
+    },
+    {
+      "name": "subquery",
+      "order": 70,
+      "description": "Subqueries (IN, EXISTS, correlacionadas, escalares, derived tables)",
+      "count": 1
+    },
+    {
+      "name": "set_ops",
+      "order": 80,
+      "description": "UNION, INTERSECT, EXCEPT",
+      "count": 0
+    },
+    {
+      "name": "cte",
+      "order": 90,
+      "description": "WITH (CTEs) e CTEs recursivas",
+      "count": 1
+    },
+    {
+      "name": "window",
+      "order": 100,
+      "description": "Window functions (OVER, PARTITION BY, ROW_NUMBER, RANK…)",
+      "count": 0
+    },
+    {
+      "name": "views",
+      "order": 110,
+      "description": "CREATE VIEW / DROP VIEW",
+      "count": 0
+    },
+    {
+      "name": "index",
+      "order": 120,
+      "description": "CREATE INDEX / DROP INDEX",
+      "count": 0
+    },
+    {
+      "name": "transaction",
+      "order": 130,
+      "description": "BEGIN / COMMIT / ROLLBACK",
+      "count": 1
+    },
+    {
+      "name": "functions",
+      "order": 140,
+      "description": "Funções escalares (string, math, date, COALESCE, CASE…)",
+      "count": 1
+    },
+    {
+      "name": "pragma",
+      "order": 150,
+      "description": "PRAGMA (SQLite-specific)",
+      "count": 0
+    },
+    {
+      "name": "other",
+      "order": 999,
+      "description": "Não classificado / features avançadas ou específicas",
+      "count": 0
+    }
+  ]
+}

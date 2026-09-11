@@ -1,0 +1,24 @@
+{
+  "name": "sql-test-tool",
+  "version": "0.1.0",
+  "description": "Progressive SQLLogicTest runner for Bun:sqlite with feature classification — preparing multi-engine support",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "test-sqlite": "./bin/test-sqlite.ts"
+  },
+  "scripts": {
+    "test-sqlite": "bun run bin/test-sqlite.ts",
+    "download": "bun run bin/test-sqlite.ts download",
+    "classify": "bun run bin/test-sqlite.ts classify",
+    "run": "bun run bin/test-sqlite.ts run",
+    "status": "bun run bin/test-sqlite.ts status"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

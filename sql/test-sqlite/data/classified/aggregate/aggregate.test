@@ -1,0 +1,25 @@
+# Aggregates + GROUP BY
+statement ok
+CREATE TABLE t4(cat TEXT, n INTEGER);
+
+statement ok
+INSERT INTO t4 VALUES('A', 10);
+INSERT INTO t4 VALUES('A', 20);
+INSERT INTO t4 VALUES('B', 5);
+INSERT INTO t4 VALUES('B', 15);
+
+query TI
+SELECT cat, SUM(n) FROM t4 GROUP BY cat ORDER BY cat;
+----
+A 30
+B 20
+
+query I
+SELECT COUNT(*) FROM t4;
+----
+4
+
+query I
+SELECT MAX(n) FROM t4 WHERE cat = 'A';
+----
+20

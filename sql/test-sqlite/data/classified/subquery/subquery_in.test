@@ -1,0 +1,24 @@
+# Subquery IN / EXISTS
+statement ok
+CREATE TABLE emp(id INTEGER, dept INTEGER);
+CREATE TABLE dept(id INTEGER, name TEXT);
+
+statement ok
+INSERT INTO emp VALUES(1, 10);
+INSERT INTO emp VALUES(2, 20);
+INSERT INTO emp VALUES(3, 10);
+
+statement ok
+INSERT INTO dept VALUES(10, 'eng');
+INSERT INTO dept VALUES(20, 'sales');
+
+query I
+SELECT id FROM emp WHERE dept IN (SELECT id FROM dept WHERE name = 'eng') ORDER BY id;
+----
+1
+3
+
+query I
+SELECT id FROM emp WHERE EXISTS (SELECT 1 FROM dept WHERE dept.id = emp.dept AND name = 'sales');
+----
+2

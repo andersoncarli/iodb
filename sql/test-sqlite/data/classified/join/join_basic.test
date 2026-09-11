@@ -1,0 +1,30 @@
+# INNER / LEFT JOIN
+statement ok
+CREATE TABLE a(id INTEGER, name TEXT);
+CREATE TABLE b(aid INTEGER, score INTEGER);
+
+statement ok
+INSERT INTO a VALUES(1, 'alice');
+INSERT INTO a VALUES(2, 'bob');
+INSERT INTO a VALUES(3, 'carol');
+
+statement ok
+INSERT INTO b VALUES(1, 100);
+INSERT INTO b VALUES(2, 80);
+
+query TIT
+SELECT a.id, a.name, b.score
+FROM a INNER JOIN b ON a.id = b.aid
+ORDER BY a.id;
+----
+1 alice 100
+2 bob 80
+
+query TIT
+SELECT a.id, a.name, b.score
+FROM a LEFT JOIN b ON a.id = b.aid
+ORDER BY a.id;
+----
+1 alice 100
+2 bob 80
+3 carol NULL
