@@ -1,136 +1,184 @@
-# MIN-TABLE-INTF
+# MIN-TABLE-INTF.md
 
-Minimal and ideal interface for a Table implementation supporting a purely functional relational algebra.
+## Table Interface and Relational Engine Foundation
 
-## 1. Purpose
-
-`Table` is the minimal physical data interface over which a relational algebra can be built.
-
-The algebra describes **what** should happen:
-
-```text
-source
-filter
-project
-group
-sort
-limit
-offset
-join
-union
-aggregate
-```
-
-`Table` describes **how data can be obtained efficiently**:
-
-```text
-schema
-scan
-get
-find
-range
-count
-filter
-group
-...
-```
-
-The two layers must remain independent.
-
-A `Table` does not need to understand SQL.
-
-A query does not need to know whether the table is backed by:
-
-* memory
-* JSON
-* JSONL
-* CSV
-* an index
-* another database
-* HTTP
-* a remote shard
-* a generated/virtual source
-
-The same relational nodes must operate over all of them.
-
-The fundamental principle is:
-
-```text
-             logical algebra
-                    |
-                 optimize
-                    |
-             physical access
-                    |
-                  Table
-```
+> **Status:** specification
+> **Purpose:** foundation for a functional relational algebra and optimizer
+> **Implementation target:** simple, portable JavaScript/Bun implementation
+> **Design principle:** semantic operations are universal; physical execution is delegated to the component that can perform it best.
 
 ---
 
-# 2. Minimal Table
+# 1. Purpose
 
-The absolute minimum implementation is:
+`Table` is the fundamental physical interface between a relational algebra engine and a data source.
+
+It is intentionally **not** a SQL interface and does not implement relational algebra itself.
+
+The architecture separates:
+
+```text
+API
+  ↓
+Query IR
+  ↓
+Relational Algebra
+  ↓
+Planner / Optimizer
+  ↓
+Table Capabilities
+  ↓
+Storage
+```
+
+The relational algebra describes **what** must be computed.
+
+The Table describes **what the underlying data source can do efficiently**.
+
+The planner decides **where and how each operation should execute**.
+
+This permits the same algebra to operate over:
+
+* memory
+* IODB
+* JSON
+* JSONL
+* CSV
+* SQLite
+* remote databases
+* HTTP APIs
+* generated data
+* partitioned data
+* indexed data
+* bitmap indexes
+* future storage engines
+
+without changing the logical query language.
+
+---
+
+# 2. Fundamental Principle
+
+The most important rule is:
+
+> **Never put an optimization into the algebra when it is really a physical capability.**
+
+For example:
+
+```text
+filter(age >= 18)
+```
+
+is a logical operation.
+
+Whether it is executed using:
+
+```text
+SCAN + FILTER
+```
+
+or:
+
+```text
+RANGE(age, >=18)
+```
+
+or:
+
+```text
+BITMAP(age >= 18)
+```
+
+is a physical decision.
+
+Therefore:
+
+```text
+FILTER
+```
+
+belongs to the algebra.
+
+```text
+RANGE
+BITMAP
+FIND
+```
+
+are execution capabilities.
+
+---
+
+# 3. Minimal Table Contract
+
+The complete relational algebra must be executable using only:
 
 ```js
-const table = {
+{
   schema,
   scan
 }
 ```
 
-This is sufficient for correctness.
+That is the **correctness baseline**.
 
-Everything else can be implemented by the algebra on top of `scan()`.
+Everything else is an optimization capability.
 
-For example:
+Minimal example:
 
-```text
-find(field, value)
-    =
-scan()
-  + filter(eq(field, value))
+```js
+const table = {
+  schema: {
+    'id number pk': 0,
+    'name string': '',
+  },
+
+  scan() {
+    // return Cursor<Row>
+  }
+}
 ```
 
-and:
+A complete relational engine must be able to evaluate every relational operation by falling back to:
 
 ```text
-range(field, bounds)
-    =
-scan()
-  + filter(range-expression)
+scan → transform → scan
 ```
 
-and:
-
-```text
-count()
-    =
-scan()
-  + count
-```
-
-Therefore:
-
-> `{ schema, scan }` is the minimum complete Table interface.
-
-The additional methods are capabilities, not semantic requirements.
+This guarantees that optimizations never become semantic requirements.
 
 ---
 
-# 3. Schema
+# 4. Ideal Table Contract
 
-The schema is declarative metadata describing the rows and their constraints.
-
-Example:
+An ideal Table exposes:
 
 ```js
-const users = {
-  schema: {
-    'id number pk autohash|autoinc': 0,
-    'name string unique indexed': '',
-    'state string null': '',
-  },
+{
+  schema,
 
+  scan,
+  get,
+  find,
+  range,
+  count,
+
+  // optional physical capabilities
+  filter,
+  project,
+  sort,
+  group,
+  aggregate,
+  join,
+  bitmap,
+}
+```
+
+The first six form the recommended physical foundation:
+
+```js
+{
+  schema,
   scan,
   get,
   find,
@@ -139,26 +187,67 @@ const users = {
 }
 ```
 
-The schema DSL follows the SOML typed-property model:
+The remaining operations are optional acceleration capabilities.
 
-```text
-'name type modifiers': default
-```
+A Table does not need to implement every capability.
 
-Examples:
+---
+
+# 5. Table Is a Duck-Typed Object
+
+No Table class is required.
+
+A Table is identified by its behavior.
 
 ```js
-{
-  'id number pk autohash|autoinc': 0,
-  'name string unique indexed': '',
-  'state string null': '',
-  'age number indexed': 0
+function isTable(x) {
+  return x
+    && x.schema
+    && typeof x.scan === 'function'
 }
 ```
 
-The schema should be normalized internally to a POJO.
+Do not require inheritance.
 
-Conceptually:
+Do not require a framework.
+
+Do not require a specific storage implementation.
+
+A simple POJO is sufficient.
+
+---
+
+# 6. Schema
+
+`schema` describes fields and their physical/logical properties.
+
+Example:
+
+```js
+const schema = {
+  'id number pk autohash|autoinc': 0,
+  'name string unique indexed': '',
+  'state string null': '',
+}
+```
+
+The schema DSL is SOML-style:
+
+```text
+field := name type modifier*
+```
+
+Example:
+
+```text
+id number pk autoinc
+name string unique indexed
+state string null
+```
+
+The parser normalizes this into an internal representation.
+
+Example:
 
 ```js
 {
@@ -166,7 +255,6 @@ Conceptually:
     id: {
       type: 'number',
       pk: true,
-      autohash: true,
       autoinc: true,
       default: 0
     },
@@ -187,58 +275,124 @@ Conceptually:
 }
 ```
 
-The schema has two roles:
+The exact internal representation is not part of the public Table contract.
 
-1. describe and validate data;
-2. describe physical capabilities available to the optimizer.
+The semantic properties are.
 
-For example:
+---
+
+# 7. Schema Properties
+
+The following properties are relevant to planning.
+
+| Property   | Meaning                                             |
+| ---------- | --------------------------------------------------- |
+| `pk`       | field is part of primary key                        |
+| `unique`   | value identifies at most one row                    |
+| `indexed`  | equality/range lookup may be accelerated            |
+| `null`     | field may contain null                              |
+| `autoinc`  | storage can generate increasing values              |
+| `autohash` | storage can generate deterministic hash identifiers |
+| `type`     | logical field type                                  |
+
+The optimizer may use this metadata.
+
+Example:
 
 ```text
-pk       → get()
-indexed  → find() / range()
-unique   → at most one result
+WHERE id = 42
+```
+
+with:
+
+```text
+id pk
+```
+
+can become:
+
+```text
+GET(42)
 ```
 
 ---
 
-# 4. `scan`
+# 8. Row
 
-The fundamental access operation:
+A Row is a plain object.
 
-```js
-table.scan()
-```
-
-returns a cursor/stream of rows.
-
-Conceptually:
+Example:
 
 ```js
-scan() -> Cursor<Row>
+{
+  id: 42,
+  name: 'Alice',
+  state: 'NY'
+}
 ```
 
-The Table must not require the caller to materialize all rows.
+Rows must not contain engine metadata.
 
-A minimal cursor is:
+Internal metadata belongs outside the row.
+
+Do not modify rows merely to execute a query.
+
+---
+
+# 9. Cursor
+
+`scan()` must return a Cursor.
+
+A Cursor represents a lazy stream of rows.
+
+Minimal contract:
 
 ```js
 const cursor = table.scan()
 
-cursor.next() // Row | null
+cursor.next()
+cursor.next()
+cursor.next()
 ```
 
-Optionally:
+`next()` returns:
+
+```text
+Row
+```
+
+or:
+
+```text
+null
+```
+
+when exhausted.
+
+Optional:
 
 ```js
 cursor.close()
 ```
 
-The important semantic property is:
+Recommended complete contract:
 
-> Each cursor has independent execution state.
+```js
+{
+  next,
+  close
+}
+```
 
-Thus:
+No array is required.
+
+---
+
+# 10. Cursor Requirements
+
+Every call to `scan()` creates independent execution state.
+
+This must work:
 
 ```js
 const a = table.scan()
@@ -247,64 +401,76 @@ const b = table.scan()
 a.next()
 b.next()
 a.next()
+b.next()
 ```
 
-must be valid and independent.
+The two cursors must not interfere.
 
-This property is important for parallel execution, nested operators and concurrent queries.
-
----
-
-# 5. Correctness baseline
-
-A Table implementing only:
+Avoid:
 
 ```js
-{
-  schema,
-  scan
+table._cursor
+```
+
+or any global mutable scan state.
+
+Prefer:
+
+```js
+function scan() {
+  let position = 0
+
+  return {
+    next() {
+      // use local position
+    }
+  }
 }
 ```
 
-must still support the complete logical algebra.
+This naturally supports:
 
-For example:
-
-```text
-SOURCE
-  ↓
-FILTER
-  ↓
-PROJECT
-  ↓
-SORT
-  ↓
-LIMIT
-```
-
-can always be executed by consuming the scan.
-
-This establishes an important rule:
-
-> Optimization must never be required for correctness.
-
-A capability merely provides a better implementation.
+* nested queries
+* concurrent queries
+* parallel execution
+* multiple consumers
+* pagination
 
 ---
 
-# 6. `get`
+# 11. Ordering
 
-Primary-key lookup:
+`scan()` must not imply ordering unless the Table explicitly guarantees it.
 
-```js
-table.get(key)
-```
-
-returns:
+The logical algebra must assume:
 
 ```text
-Row | null
+unordered relation
 ```
+
+unless an explicit:
+
+```text
+sort
+```
+
+operation exists.
+
+A physical index may naturally return ordered rows, but this must not automatically become a semantic guarantee.
+
+The optimizer may exploit physical ordering only when it knows the ordering guarantee.
+
+---
+
+# 12. `get`
+
+Signature:
+
+```js
+get(key) -> Row | null
+```
+
+`get` performs primary-key lookup.
 
 Example:
 
@@ -312,461 +478,2089 @@ Example:
 table.get(42)
 ```
 
-The semantic equivalent is:
-
-```text
-scan()
-  |> filter(id == 42)
-  |> first
-```
-
-but a Table with a primary-key implementation should provide direct lookup.
-
-The optimizer can transform:
-
-```text
-FILTER(eq(pk, 42))
-    SOURCE(table)
-```
-
-into:
-
-```text
-GET(table, 42)
-```
-
-Schema:
+For composite keys:
 
 ```js
-'id number pk': 0
+table.get([42, 7])
 ```
 
-therefore establishes the relationship:
+if supported by the schema.
+
+Semantics:
 
 ```text
-pk → get
+zero rows → null
+one row  → Row
 ```
 
-`get` is an access capability, not a relational operator.
+A primary key must identify at most one row.
 
 ---
 
-# 7. `find`
+# 13. `find`
 
-Equality lookup:
+Signature:
 
 ```js
-table.find(field, value)
-```
-
-returns:
-
-```text
-Cursor<Row>
+find(field, value) -> Cursor
 ```
 
 Example:
 
 ```js
-table.find('name', 'Alice')
+table.find('state', 'NY')
 ```
 
-Semantically:
+Semantics:
 
 ```text
-scan()
-  |> filter(name == 'Alice')
+find(field, value)
+≡
+filter(eq(field, value), scan())
 ```
 
-but can use an index when:
+The difference is physical.
 
-```js
-'name string indexed'
-```
+`find` exists because the Table may have an efficient index.
 
-is present.
-
-For:
-
-```js
-'name string unique indexed'
-```
-
-the result is known to contain at most one row.
-
-The optimizer can therefore transform:
+Example:
 
 ```text
-FILTER(eq(name, "Alice"))
-    SOURCE(users)
+INDEX(state)
 ```
 
-into:
+can make:
 
 ```text
-FIND(users, name, "Alice")
+find(state, NY)
 ```
 
-or, when appropriate:
+much cheaper than:
 
 ```text
-GET(...)
+scan → filter
 ```
 
 ---
 
-# 8. `range`
+# 14. `range`
 
-Range lookup:
-
-```js
-table.range(field, bounds)
-```
-
-returns:
-
-```text
-Cursor<Row>
-```
-
-Example:
+Signature:
 
 ```js
+range(field, bounds) -> Cursor
+```
+
+Bounds:
+
+```js
+{
+  gt:  10,
+  gte: 10,
+  lt:  20,
+  lte: 20
+}
+```
+
+Examples:
+
+```js
+table.range('age', { gte: 18 })
+
 table.range('age', {
   gte: 18,
   lt: 30
 })
 ```
 
-Possible bounds:
-
-```js
-{
-  gt,
-  gte,
-  lt,
-  lte
-}
-```
-
-This corresponds naturally to:
-
-```sql
-WHERE age >= 18 AND age < 30
-```
-
-A range capability is particularly valuable for:
-
-* numeric fields
-* dates
-* ordered strings
-* timestamps
-* ordered indexes
-
-The logical algebra remains:
+Semantics:
 
 ```text
-FILTER(predicate)
+range(field, bounds)
+≡
+filter(rangeExpr(field, bounds), scan())
 ```
 
-The optimizer may replace it with:
+Again, `range` is a physical capability.
 
-```text
-RANGE(field, bounds)
-```
-
-when the Table can execute that predicate efficiently.
+It exists because an ordered index may execute the operation efficiently.
 
 ---
 
-# 9. `count`
+# 15. `count`
 
-Basic count:
+Signature:
+
+```js
+count() -> number
+```
+
+Semantically:
+
+```text
+count()
+≡
+COUNT(scan())
+```
+
+A storage implementation may return the count directly.
+
+Therefore:
 
 ```js
 table.count()
 ```
 
-returns:
+is an optimization capability.
 
-```text
-number
-```
-
-A minimal implementation can always be:
-
-```text
-scan()
-  |> count
-```
-
-But a physical Table may implement it directly.
-
-For example, if row count is already known:
-
-```js
-count() -> O(1)
-```
-
-For a filtered count, an optional form may be supported:
-
-```js
-table.count(predicate)
-```
-
-However, filtered count is not fundamental to the Table interface.
-
-It is sufficient for the algebra to implement:
-
-```text
-FILTER
-  ↓
-COUNT
-```
-
-and let optimization discover a faster Table-specific operation.
-
-Therefore:
-
-```text
-count
-```
-
-is primarily an optimization capability.
+The algebra must not depend on it.
 
 ---
 
-# 10. `filter`
+# 16. Logical Relational Algebra
 
-`filter` is fundamentally different from `find` and `range`.
-
-`filter` belongs to the **logical relational algebra**:
+The core logical operations are:
 
 ```text
-filter(Stream<Row>, Expr)
-    -> Stream<Row>
+SOURCE
+FILTER
+PROJECT
+DISTINCT
+SORT
+OFFSET
+LIMIT
+GROUP
+AGGREGATE
+JOIN
+UNION
+```
+
+The exact public API may differ.
+
+The internal IR must remain independent of the API.
+
+---
+
+# 17. Canonical Node
+
+A query node is a plain object.
+
+Unary operation:
+
+```js
+{
+  op: 'filter',
+  args: [expr],
+  in: input
+}
+```
+
+Example:
+
+```js
+{
+  op: 'filter',
+  args: [
+    {
+      op: 'gte',
+      args: ['age', 18]
+    }
+  ],
+  in: {
+    op: 'source',
+    name: 'users'
+  }
+}
+```
+
+Multi-input operation:
+
+```js
+{
+  op: 'join',
+  args: [condition],
+  in: [left, right]
+}
+```
+
+The important invariant is:
+
+```text
+node = POJO
+```
+
+No execution state is stored in the logical node.
+
+---
+
+# 18. Expression Nodes
+
+Expressions use the same node model.
+
+Example:
+
+```js
+{
+  op: 'eq',
+  args: ['status', 'active']
+}
+```
+
+```js
+{
+  op: 'gte',
+  args: ['age', 18]
+}
+```
+
+Boolean expressions:
+
+```js
+{
+  op: 'and',
+  args: [
+    { op: 'eq', args: ['status', 'active'] },
+    { op: 'gte', args: ['age', 18] }
+  ]
+}
+```
+
+Operators should be generic data.
+
+Do not encode expressions as JavaScript source strings.
+
+---
+
+# 19. Expression Evaluation
+
+The baseline evaluator is simple.
+
+Pseudocode:
+
+```js
+function evalExpr(expr, row) {
+  const op = expr.op
+
+  if (op === 'field')
+    return row[expr.args[0]]
+
+  if (op === 'value')
+    return expr.args[0]
+
+  if (op === 'eq')
+    return value(expr.args[0], row) === value(expr.args[1], row)
+
+  if (op === 'gte')
+    return value(expr.args[0], row) >= value(expr.args[1], row)
+
+  // ...
+}
+```
+
+The actual implementation should use an operator map rather than a large switch when practical:
+
+```js
+const operators = {
+  eq:  (a, b) => a === b,
+  ne:  (a, b) => a !== b,
+  gt:  (a, b) => a > b,
+  gte: (a, b) => a >= b,
+  lt:  (a, b) => a < b,
+  lte: (a, b) => a <= b,
+}
+```
+
+The expression evaluator must be deterministic.
+
+---
+
+# 20. Core Expression Operators
+
+Minimum:
+
+```text
+eq
+ne
+gt
+gte
+lt
+lte
+in
+like
+isNull
+isNotNull
+and
+or
+not
+```
+
+String and arithmetic functions can be extensions.
+
+The core should remain small.
+
+---
+
+# 21. Baseline Executor
+
+Every logical operation must have a fallback implementation based on `scan`.
+
+Example:
+
+```js
+function* rows(cursor) {
+  let row
+
+  while ((row = cursor.next()) !== null)
+    yield row
+}
 ```
 
 Conceptually:
 
 ```js
-filter(input, is.eq('state', 'NY'))
+function execute(node) {
+  switch (node.op) {
+
+    case 'source':
+      return node.table.scan()
+
+    case 'filter':
+      return filter(
+        execute(node.in),
+        node.args[0]
+      )
+
+    case 'project':
+      return project(
+        execute(node.in),
+        node.args
+      )
+
+    // ...
+  }
+}
+```
+
+The real implementation may use function maps instead of a switch.
+
+---
+
+# 22. Filter
+
+Logical semantics:
+
+```text
+FILTER(expr, input)
+```
+
+returns rows where:
+
+```js
+evalExpr(expr, row) === true
+```
+
+Baseline:
+
+```js
+function filter(cursor, expr) {
+  return {
+    next() {
+      let row
+
+      while ((row = cursor.next()) !== null) {
+        if (evalExpr(expr, row))
+          return row
+      }
+
+      return null
+    },
+
+    close() {
+      cursor.close?.()
+    }
+  }
+}
+```
+
+This is streaming.
+
+It does not create an array.
+
+---
+
+# 23. Project
+
+Logical semantics:
+
+```text
+PROJECT(fields, input)
+```
+
+Example:
+
+```text
+PROJECT(id,name)
+```
+
+Input:
+
+```js
+{
+  id: 1,
+  name: 'Alice',
+  age: 30
+}
+```
+
+Output:
+
+```js
+{
+  id: 1,
+  name: 'Alice'
+}
+```
+
+Baseline implementation is streaming.
+
+---
+
+# 24. Limit
+
+```text
+LIMIT(n, input)
+```
+
+must stop requesting input after `n` rows.
+
+This is important because:
+
+```text
+LIMIT 20
+```
+
+should not cause a million-row source to be completely scanned.
+
+The cursor is allowed to remain lazy.
+
+---
+
+# 25. Offset
+
+```text
+OFFSET(n, input)
+```
+
+consumes and discards the first `n` rows.
+
+An implementation may optimize this if the physical source supports seeking.
+
+---
+
+# 26. Sort
+
+Baseline:
+
+```text
+input
+ ↓
+materialize
+ ↓
+sort
+ ↓
+cursor
+```
+
+Sorting normally requires materialization.
+
+If the Table provides an ordered capability, the planner may eliminate the explicit sort.
+
+---
+
+# 27. Distinct
+
+Baseline:
+
+```js
+const seen = new Set()
+```
+
+For each row:
+
+```text
+key(row)
+if unseen:
+    emit row
+```
+
+The implementation must define the key semantics.
+
+For simple field projection:
+
+```js
+key = row[field]
+```
+
+For multiple fields:
+
+```js
+key = tuple(row, fields)
+```
+
+---
+
+# 28. Group
+
+`group` is a logical operation.
+
+It must remain part of the algebra.
+
+Example:
+
+```text
+GROUP(state)
+```
+
+transforms:
+
+```text
+Row stream
+```
+
+into:
+
+```text
+Group stream
+```
+
+A group conceptually contains:
+
+```js
+{
+  key,
+  rows
+}
+```
+
+but the implementation does not need to materialize `rows` when an aggregate can be computed incrementally.
+
+---
+
+# 29. Aggregate
+
+Examples:
+
+```text
+count
+sum
+min
+max
+avg
+```
+
+An aggregate should ideally expose:
+
+```text
+init
+step
+merge
+result
+```
+
+Example:
+
+```js
+const count = {
+  init: () => 0,
+
+  step: n => n + 1,
+
+  merge: (a, b) => a + b,
+
+  result: n => n
+}
+```
+
+This structure is important because:
+
+```text
+step
+```
+
+permits streaming,
+
+while:
+
+```text
+merge
+```
+
+permits parallel aggregation.
+
+---
+
+# 30. Parallel Aggregation
+
+Suppose the input is divided:
+
+```text
+partition A
+partition B
+partition C
+partition D
+```
+
+Each worker performs:
+
+```text
+aggregate locally
+```
+
+producing:
+
+```text
+A'
+B'
+C'
+D'
+```
+
+Then:
+
+```text
+merge(A', B', C', D')
+```
+
+produces the final result.
+
+Therefore:
+
+> **Associative merge is the fundamental property enabling parallel aggregation.**
+
+This should be preserved in the aggregate contract.
+
+---
+
+# 31. Join
+
+Logical form:
+
+```text
+JOIN(left, right, predicate)
+```
+
+Baseline implementation may use nested loops:
+
+```js
+for each leftRow:
+  for each rightRow:
+    if predicate(leftRow, rightRow):
+      emit(join(leftRow, rightRow))
+```
+
+This is deliberately not optimal.
+
+The planner may replace it with:
+
+```text
+hash join
+index join
+merge join
+bitmap join
+remote join
+```
+
+without changing the logical node.
+
+---
+
+# 32. Physical Capabilities
+
+A Table capability is an optional implementation of a semantic operation.
+
+Examples:
+
+```text
+get
+find
+range
+count
+bitmap
+sort
+group
+aggregate
+join
+```
+
+The planner can test capabilities by function presence.
+
+Example:
+
+```js
+if (table.find)
+  ...
+```
+
+No registry is required initially.
+
+A future capability descriptor may be added if cost estimation requires more information.
+
+---
+
+# 33. Capability Selection
+
+Given:
+
+```text
+FILTER(eq(name, "Alice"))
+SOURCE(users)
+```
+
+the planner asks:
+
+```text
+Does users have get?
+Does name identify the primary key?
+Does users have find?
+Is name indexed?
+```
+
+Possible result:
+
+```text
+FIND(users, name, Alice)
+```
+
+If no capability exists:
+
+```text
+SCAN(users)
+FILTER(eq(name, Alice))
+```
+
+Correctness is identical.
+
+---
+
+# 34. Primary-Key Rewrite
+
+Pattern:
+
+```text
+FILTER(eq(pk, value))
+  SOURCE(table)
+```
+
+can become:
+
+```text
+GET(table, value)
+```
+
+provided:
+
+```text
+pk is unique
+```
+
+Execution:
+
+```js
+const row = table.get(value)
+```
+
+The result is converted into a one-row or empty cursor.
+
+---
+
+# 35. Equality-Index Rewrite
+
+Pattern:
+
+```text
+FILTER(eq(field, value))
+  SOURCE(table)
+```
+
+can become:
+
+```text
+FIND(table, field, value)
+```
+
+when:
+
+```text
+table.find
+```
+
+exists.
+
+If multiple predicates exist:
+
+```text
+FILTER(eq(state, 'NY') AND age >= 18)
+```
+
+the planner may use:
+
+```text
+FIND(state, NY)
+  FILTER(age >= 18)
+```
+
+---
+
+# 36. Range Rewrite
+
+Pattern:
+
+```text
+FILTER(gte(age, 18))
+  SOURCE(table)
+```
+
+can become:
+
+```text
+RANGE(table, age, {gte:18})
+```
+
+For:
+
+```text
+age >= 18 AND age < 30
+```
+
+combine the predicates:
+
+```text
+RANGE(age, {
+  gte: 18,
+  lt: 30
+})
+```
+
+This rewrite should happen before execution.
+
+---
+
+# 37. Filter Normalization
+
+Adjacent filters:
+
+```text
+FILTER(A)
+  FILTER(B)
+    input
+```
+
+should normalize to:
+
+```text
+FILTER(AND(A,B))
+  input
+```
+
+This gives the optimizer one predicate tree to analyze.
+
+Then:
+
+```text
+AND(eq(pk,42), age >= 18)
+```
+
+can potentially become:
+
+```text
+GET(42)
+FILTER(age >= 18)
+```
+
+---
+
+# 38. Boolean Simplification
+
+Minimum rules:
+
+```text
+AND(true, X)  → X
+AND(false, X) → false
+
+OR(false, X)  → X
+OR(true, X)   → true
+
+NOT(NOT(X))   → X
+```
+
+Also:
+
+```text
+FILTER(true, input)  → input
+FILTER(false, input) → EMPTY
+```
+
+These are pure tree rewrites.
+
+---
+
+# 39. Projection Pushdown
+
+Given:
+
+```text
+PROJECT(a,b)
+  FILTER(eq(c,10))
+    SOURCE(table)
+```
+
+the filter requires `c`.
+
+Therefore the planner must retain:
+
+```text
+a
+b
+c
+```
+
+until filtering has completed.
+
+It may push projection down only when required fields are preserved.
+
+General rule:
+
+> **A transformation may move toward the source only if it preserves the fields required by all operations above it.**
+
+---
+
+# 40. Limit Pushdown
+
+`LIMIT` may be pushed downward only when semantics are preserved.
+
+Safe example:
+
+```text
+LIMIT(0, X) → EMPTY
+```
+
+Potentially safe:
+
+```text
+PROJECT
+  LIMIT
+    X
+```
+
+may become:
+
+```text
+LIMIT
+  PROJECT
+    X
+```
+
+because projection preserves cardinality.
+
+Not generally safe:
+
+```text
+FILTER
+  LIMIT
+    X
+```
+
+→
+
+```text
+LIMIT
+  FILTER
+    X
+```
+
+because filtering can remove rows.
+
+The optimizer must therefore use explicit rewrite rules rather than arbitrary movement.
+
+---
+
+# 41. Bitmap Capability
+
+Bitmap indexes are physical acceleration.
+
+A Table may expose:
+
+```js
+bitmap(expr) -> Bitmap
+```
+
+or a more specialized capability.
+
+The exact physical API may evolve.
+
+The important semantic property is:
+
+```text
+Bitmap = set of matching row identities
+```
+
+Example:
+
+```text
+bitmap(status = active)
 ```
 
 produces:
 
+```text
+{ 1, 4, 7, 12, 20, ... }
+```
+
+A second expression:
+
+```text
+bitmap(age >= 18)
+```
+
+produces another bitmap.
+
+Boolean operations become:
+
+```text
+A AND B
+A OR B
+A AND NOT B
+```
+
+which are extremely cheap compared with row-by-row evaluation.
+
+---
+
+# 42. Bitmap Is Not the Row
+
+A bitmap identifies candidate rows.
+
+It does not need to contain complete row data.
+
+Conceptually:
+
+```text
+Bitmap
+   ↓
+row ids
+   ↓
+materialize rows
+```
+
+This allows predicates to be evaluated before touching row payloads.
+
+For example:
+
+```text
+status = active
+AND
+state = NY
+AND
+age >= 18
+```
+
+can become:
+
+```text
+B1 = bitmap(status = active)
+B2 = bitmap(state = NY)
+B3 = bitmap(age >= 18)
+
+B = B1 AND B2 AND B3
+
+B
+ ↓
+fetch matching rows
+```
+
+---
+
+# 43. Bitmap and `find` Are Complementary
+
+A single equality:
+
+```text
+state = NY
+```
+
+may use:
+
+```text
+find(state, NY)
+```
+
+A complex predicate:
+
+```text
+state = NY
+AND
+status = active
+AND
+age >= 18
+```
+
+may be better represented as bitmap operations.
+
+Therefore the optimizer should not hard-code:
+
+```text
+indexed → find
+```
+
+It should eventually choose based on:
+
+* selectivity
+* available indexes
+* estimated cost
+* cardinality
+* bitmap size
+* row width
+* downstream operations
+
+The initial implementation can use simple rules.
+
+Cost-based planning can come later.
+
+---
+
+# 44. Cost Model
+
+The first planner does not need a sophisticated cost model.
+
+Start with deterministic rules:
+
+```text
+PK equality      → GET
+indexed equality → FIND
+indexed range    → RANGE
+bitmap available → BITMAP for complex predicates
+otherwise        → SCAN + FILTER
+```
+
+Later introduce:
+
+```js
+cost(plan, stats)
+```
+
+where statistics may include:
+
+```text
+row count
+distinct values
+index cardinality
+selectivity
+row width
+bitmap density
+```
+
+The optimizer remains independent of the storage implementation.
+
+---
+
+# 45. Statistics
+
+Statistics are optional.
+
+Possible Table metadata:
+
+```js
+stats: {
+  rows: 1000000,
+
+  fields: {
+    state: {
+      distinct: 50
+    },
+
+    status: {
+      distinct: 5
+    }
+  }
+}
+```
+
+Statistics must never be required for correctness.
+
+They only improve planning.
+
+---
+
+# 46. Execution Plan
+
+After optimization, the logical query becomes an executable plan.
+
+Example:
+
+```text
+SOURCE users
+  ↓
+FILTER status = active
+  ↓
+FILTER age >= 18
+  ↓
+PROJECT id,name
+  ↓
+LIMIT 20
+```
+
+may compile to:
+
+```text
+FIND users status=active
+  ↓
+RANGE age>=18
+  ↓
+PROJECT id,name
+  ↓
+LIMIT 20
+```
+
+The execution plan may contain physical operations not present in the original query.
+
+---
+
+# 47. Planner Contract
+
+Conceptually:
+
+```js
+plan = optimize(query)
+```
+
+Input:
+
+```text
+logical Node
+```
+
+Output:
+
+```text
+optimized Node / execution graph
+```
+
+The planner should be:
+
+```text
+pure
+deterministic
+side-effect free
+```
+
+It must not read rows.
+
+It only inspects:
+
+* node structure
+* schema
+* capabilities
+* optional statistics
+
+---
+
+# 48. Executor Contract
+
+Conceptually:
+
+```js
+cursor = execute(plan)
+```
+
+The executor is responsible for:
+
+```text
+opening sources
+creating cursors
+applying operators
+closing resources
+```
+
+It must not change the logical meaning of the plan.
+
+---
+
+# 49. Terminal Execution
+
+The public Query can expose:
+
+```js
+query()
+```
+
+and:
+
+```js
+query.run()
+```
+
+as equivalent terminal operations.
+
+Conceptually:
+
+```js
+function run(query) {
+  const logical = normalize(query)
+  const plan = optimize(logical)
+  return materialize(execute(plan))
+}
+```
+
+For streaming APIs:
+
+```js
+query.cursor()
+```
+
+may return the execution cursor directly.
+
+---
+
+# 50. Page-Oriented Execution
+
+The first implementation can materialize a bounded page:
+
+```js
+query.run({
+  limit: 100
+})
+```
+
+or:
+
+```js
+query.limit(100)()
+```
+
+The executor should stop requesting rows once the requested page is full.
+
+Future pagination may return:
+
 ```js
 {
-  op: 'filter',
-  in: input,
+  rows,
+  next
+}
+```
+
+where `next` represents continuation state.
+
+The physical cursor must remain capable of lazy continuation.
+
+---
+
+# 51. Source Resolution
+
+A source node contains logical identity:
+
+```js
+{
+  op: 'source',
+  name: 'users'
+}
+```
+
+The executor resolves it to a Table.
+
+For IODB:
+
+```js
+const db = IO('mydb/')
+```
+
+and:
+
+```js
+db.users
+```
+
+is a lazy source reference.
+
+Conceptually:
+
+```text
+db.users
+    ↓
+source("users")
+    ↓
+mydb/users.table.json
+    ↓
+Table
+```
+
+Access to the underlying file must remain lazy.
+
+Creating a query must not read the table.
+
+---
+
+# 52. Query Construction Must Be Pure
+
+This must not execute:
+
+```js
+const q = db.users.status('active')
+```
+
+No scan.
+
+No file read.
+
+No index lookup.
+
+No network request.
+
+Only a semantic node is constructed.
+
+Execution occurs only at:
+
+```js
+q()
+```
+
+or:
+
+```js
+q.run()
+```
+
+---
+
+# 53. Fluent API Mapping
+
+The public fluent API is syntactic sugar over nodes.
+
+Example:
+
+```js
+db.users
+  .status('active')
+  .age.gte(18)
+  .pick('id', 'name')
+  .sort('name')
+  .limit(20)
+```
+
+normalizes to:
+
+```text
+LIMIT
+  SORT
+    PROJECT
+      FILTER
+        FILTER
+          SOURCE
+```
+
+The optimizer sees only the normalized representation.
+
+---
+
+# 54. Predicate Sugar
+
+```js
+users.status('active')
+```
+
+means:
+
+```js
+users.where(
+  is.eq('status', 'active')
+)
+```
+
+Similarly:
+
+```js
+users.age.gte(18)
+```
+
+means:
+
+```js
+users.where(
+  is.gte('age', 18)
+)
+```
+
+This syntax is implemented by Proxy.
+
+No dynamic method needs to physically exist for every field.
+
+---
+
+# 55. `is` Expression Namespace
+
+Example:
+
+```js
+is.eq('status', 'active')
+
+is.gte('age', 18)
+
+is.and(
+  is.eq('state', 'NY'),
+  is.gte('age', 18)
+)
+```
+
+All return expression nodes.
+
+Example:
+
+```js
+is.gte('age', 18)
+```
+
+returns:
+
+```js
+{
+  op: 'gte',
+  args: ['age', 18]
+}
+```
+
+---
+
+# 56. String Predicate Parser
+
+This is optional syntax.
+
+Example:
+
+```js
+users.where(
+  'age >= 18 && status = "active"'
+)
+```
+
+The parser converts it to:
+
+```js
+{
+  op: 'and',
   args: [
     {
+      op: 'gte',
+      args: ['age', 18]
+    },
+    {
       op: 'eq',
-      args: ['state', 'NY']
+      args: ['status', 'active']
     }
   ]
 }
 ```
 
-A Table does not need `filter`.
+The parser must not generate JavaScript code.
 
-A physical implementation may optionally provide:
-
-```js
-table.filter(predicate)
-```
-
-when it can execute predicates internally more efficiently.
-
-But this should be viewed as a capability.
-
-The distinction is:
-
-```text
-filter = semantic operation
-find   = equality access strategy
-range  = range access strategy
-```
-
-Thus:
-
-```text
-filter(eq(name, 'Alice'))
-```
-
-may become:
-
-```text
-find(name, 'Alice')
-```
-
-while:
-
-```text
-filter(gte(age, 18))
-```
-
-may become:
-
-```text
-range(age, { gte: 18 })
-```
-
-or remain:
-
-```text
-scan + filter
-```
+It must generate the same expression nodes used by `is`.
 
 ---
 
-# 11. `group`
+# 57. Parser Scope
 
-`group` is also a fundamental logical operation.
-
-Unlike `find` and `range`, it changes the structure of the stream.
+The first parser only needs:
 
 ```text
-group(Stream<Row>, KeyExpr)
-    -> Stream<Group>
+identifier
+number
+string
+null
+
+=
+==
+!=
+>
+>=
+<
+<=
+
+&&
+||
+!
+(
+)
 ```
+
+Optional:
+
+```text
+IN
+LIKE
+IS NULL
+```
+
+Do not implement a complete SQL expression language initially.
+
+The objective is to reach the same IR.
+
+---
+
+# 58. SQL Frontend
+
+SQL is another frontend.
 
 Example:
-
-```js
-group(users, 'state')
-```
-
-conceptually produces:
-
-```text
-NY → [...]
-CA → [...]
-SP → [...]
-```
-
-It is therefore part of the algebra:
-
-```text
-SOURCE
-  ↓
-FILTER
-  ↓
-GROUP
-  ↓
-AGGREGATE
-```
-
-Example:
-
-```js
-db.orders
-  .group('customerId')
-  .count()
-```
-
-corresponds to:
 
 ```sql
-SELECT customerId, COUNT(*)
-FROM orders
-GROUP BY customerId
+SELECT id, name
+FROM users
+WHERE status = 'active'
+  AND age >= 18
+ORDER BY name
+LIMIT 20
 ```
 
-A Table may optionally provide:
+must become the same logical plan:
 
-```js
-table.group(...)
+```text
+LIMIT
+  SORT
+    PROJECT
+      FILTER
+        SOURCE
 ```
 
-but it is not required for correctness.
+The engine should never have two execution paths:
 
-The generic algebra can always implement grouping from `scan()`.
+```text
+SQL executor
+JS executor
+```
+
+Instead:
+
+```text
+SQL parser ─┐
+            ├→ Query IR → Planner → Executor
+JS API ─────┤
+            │
+SOML ───────┤
+            │
+future API ─┘
+```
 
 ---
 
-# 12. Capability levels
+# 59. Mutations
 
-A useful progression is:
+Mutation is outside the minimal read-oriented Table contract.
 
-## Level 0 — complete functional Table
+Future Table capabilities may include:
 
 ```js
+insert(row)
+update(...)
+remove(...)
+```
+
+Transactions may later include:
+
+```js
+begin()
+commit()
+rollback()
+```
+
+Do not make these dependencies of the relational read engine.
+
+The read algebra should remain usable over immutable and remote sources.
+
+---
+
+# 60. Functional Boundary
+
+The intended functional structure is:
+
+```text
+query
+  ↓
+normalize(query)
+  ↓
+logical IR
+  ↓
+optimize(IR)
+  ↓
+physical IR
+  ↓
+execute(plan)
+  ↓
+cursor
+```
+
+Only the final execution layer interacts with mutable storage state.
+
+This makes:
+
+```text
+query construction
+normalization
+optimization
+expression evaluation
+```
+
+easy to test independently.
+
+---
+
+# 61. Core Data Model
+
+The minimum internal model is:
+
+```js
+// Logical relation
+{
+  op,
+  args,
+  in
+}
+
+// Expression
+{
+  op,
+  args
+}
+
+// Multi-input relation
+{
+  op,
+  args,
+  in: [left, right]
+}
+
+// Table
 {
   schema,
-  scan
+  scan,
+
+  get?,
+  find?,
+  range?,
+  count?,
+
+  filter?,
+  project?,
+  sort?,
+  group?,
+  aggregate?,
+  join?,
+  bitmap?
 }
 ```
 
-Capabilities:
+No class hierarchy is required.
+
+---
+
+# 62. Node Invariants
+
+Every Node must satisfy:
 
 ```text
+1. op is a string.
+2. args is an array when present.
+3. in is absent or a Node or Node[].
+4. Nodes contain semantic data only.
+5. Nodes contain no cursors.
+6. Nodes contain no row data unless it is a literal argument.
+7. Nodes do not execute.
+```
+
+This is critical.
+
+A plan node is a description, not an execution object.
+
+---
+
+# 63. Capability Invariants
+
+A capability:
+
+```text
+must preserve logical semantics
+must return compatible data
+must not change query meaning
+may be more efficient
+```
+
+Therefore:
+
+```text
+FIND(field,value)
+```
+
+must produce exactly the rows that:
+
+```text
+FILTER(eq(field,value), SCAN)
+```
+
+would produce.
+
+Likewise:
+
+```text
+RANGE
+```
+
+must be semantically equivalent to its corresponding filter.
+
+---
+
+# 64. Capability Verification
+
+During development, capabilities should be testable against the baseline.
+
+For example:
+
+```js
+const expected = collect(
+  execute(
+    filter(
+      eq('state', 'NY'),
+      source(table)
+    )
+  )
+)
+
+const actual = collect(
+  table.find('state', 'NY')
+)
+
+check(equal(actual, expected))
+```
+
+This is important because optimization must never change semantics.
+
+---
+
+# 65. Reference Executor
+
+The first implementation should include a deliberately simple reference executor.
+
+It should use only:
+
+```text
+schema
 scan
-filter
-project
-sort
-group
-aggregate
-join
-union
-limit
-offset
 ```
 
-Everything is implemented by consuming the stream.
+and implement everything else functionally.
 
-This is the reference implementation.
+This executor becomes:
+
+```text
+semantic oracle
+```
+
+for optimized execution.
+
+Example:
+
+```text
+Reference executor
+        │
+        ├──── compare ──── Optimized executor
+        │
+        └──── expected semantics
+```
+
+This greatly simplifies testing.
 
 ---
 
-## Level 1 — primary-key access
+# 66. Testing Strategy
+
+Every optimizer rule should have:
+
+```text
+logical plan
+optimized plan
+reference result
+optimized result
+```
+
+Example:
+
+```text
+INPUT:
+FILTER(eq(id,42), SOURCE(users))
+
+EXPECTED PLAN:
+GET(users,42)
+
+EXPECTED RESULT:
+same as reference executor
+```
+
+Tests should verify both:
+
+```text
+plan shape
+result equality
+```
+
+---
+
+# 67. Optimizer Rule Format
+
+A rule can conceptually be:
 
 ```js
-{
-  schema,
-  scan,
-  get
+function rule(node, context) {
+  if (!matches(node))
+    return node
+
+  return rewrite(node)
 }
 ```
 
-Adds efficient:
+Rules are pure.
 
-```text
-pk = value
-```
-
-queries.
-
----
-
-## Level 2 — equality indexes
+Example:
 
 ```js
-{
-  schema,
-  scan,
-  get,
-  find
+function filterPk(node, ctx) {
+  // FILTER(eq(pk,value), SOURCE(table))
+  // → GET(table,value)
 }
 ```
 
-Adds efficient:
+Rules can be repeatedly applied until stable.
+
+---
+
+# 68. Normalization Pipeline
+
+Recommended order:
 
 ```text
-field = value
+parse/build
+    ↓
+normalize expressions
+    ↓
+normalize relational nodes
+    ↓
+simplify boolean expressions
+    ↓
+merge adjacent filters
+    ↓
+push safe predicates/projections
+    ↓
+select physical capabilities
+    ↓
+produce execution plan
 ```
 
-queries.
+This keeps optimization deterministic.
 
-Schema:
+---
+
+# 69. Fixpoint Optimization
+
+Optimization may be repeated:
 
 ```js
-'name string indexed'
+while (changed)
+  plan = rewrite(plan)
+```
+
+until:
+
+```text
+plan == previousPlan
+```
+
+The first implementation may instead perform a fixed sequence of passes.
+
+Avoid an overly sophisticated rule engine initially.
+
+---
+
+# 70. Execution Graph
+
+The optimized plan can remain a tree initially.
+
+Later, identical subplans may be shared.
+
+Example:
+
+```text
+              SOURCE(users)
+                    │
+                  FILTER
+                    │
+             ┌──────┴──────┐
+             ▼             ▼
+         PROJECT          GROUP
+             │             │
+             ▼             ▼
+             Q1            Q2
+```
+
+The same representation can therefore evolve from:
+
+```text
+tree
+```
+
+to:
+
+```text
+DAG
+```
+
+without changing logical semantics.
+
+---
+
+# 71. Parallel Execution
+
+Parallelism should emerge from independent streams.
+
+Required properties:
+
+```text
+independent cursors
+no hidden global cursor state
+partitionable scans when supported
+associative aggregates
+mergeable intermediate results
+```
+
+Optional capability:
+
+```js
+scan({ partition })
+```
+
+or:
+
+```js
+partitions()
+```
+
+The exact API can be added later.
+
+The baseline remains:
+
+```js
+scan()
 ```
 
 ---
 
-## Level 3 — ordered indexes
+# 72. Remote Execution
+
+A remote Table can expose the same contract:
 
 ```js
 {
@@ -778,438 +2572,341 @@ Schema:
 }
 ```
 
-Adds efficient:
+Its implementation might translate these operations into network requests.
+
+The relational engine does not need to know that the source is remote.
+
+A future remote capability may expose:
 
 ```text
-field > value
-field >= value
-field < value
-field <= value
-BETWEEN
-ORDER BY field
-```
-
-when the physical implementation provides ordered access.
-
----
-
-## Level 4 — aggregate capabilities
-
-```js
-{
-  schema,
-  scan,
-  get,
-  find,
-  range,
-  count
-}
-```
-
-Allows direct cardinality operations.
-
----
-
-## Level 5 — pushed relational operations
-
-Optional physical capabilities:
-
-```js
-{
-  schema,
-  scan,
-  get,
-  find,
-  range,
-  count,
-
-  filter,
-  group,
-  ...
-}
-```
-
-These allow the Table to execute portions of the logical plan itself.
-
-They are useful when the underlying storage can perform the operation more efficiently than the generic executor.
-
----
-
-# 13. Logical vs physical operations
-
-The conceptual division should remain:
-
-```text
-LOGICAL ALGEBRA
-
-source
 filter
 project
+sort
 group
 aggregate
-sort
-limit
-offset
-join
-union
 ```
 
-versus:
+allowing computation to be pushed to the remote server.
 
-```text
-TABLE CAPABILITIES
-
-scan
-get
-find
-range
-count
-filter?
-group?
-...
-```
-
-The question mark matters.
-
-The logical operation is mandatory.
-
-The physical implementation is optional.
-
-For example:
-
-```text
-FILTER(state = 'NY')
-        │
-        ▼
-     optimize
-        │
-        ├── find(state, 'NY')
-        │
-        └── scan + filter
-```
-
-Both have identical semantics.
+This is the same optimization principle used locally.
 
 ---
 
-# 14. Functional requirements
+# 73. Pushdown
 
-The Table interface should ideally satisfy these properties.
+Pushdown means:
 
-## Purity of observation
+> execute an operation closer to the data source when that source can perform it efficiently.
 
-Read operations should not mutate the Table:
-
-```js
-scan()
-get()
-find()
-range()
-count()
-```
-
-Repeated calls must describe independent reads.
-
-## Reentrancy
-
-Multiple cursors must coexist:
-
-```js
-const a = table.scan()
-const b = table.scan()
-```
-
-without shared cursor state.
-
-## Laziness
-
-`scan`, `find` and `range` should preferably return streams/cursors rather than arrays.
-
-## Composability
-
-A cursor should be consumable by generic algebra operators:
+Example:
 
 ```text
-Table
-  ↓
-Cursor
-  ↓
-Filter
-  ↓
-Project
-  ↓
-Group
-```
-
-## Deterministic semantics
-
-The same Table state and operation must produce the same logical result.
-
-## Explicit ordering
-
-Unless explicitly guaranteed by the Table, consumers must not assume scan order.
-
-An index-backed `range` may optionally expose ordering metadata.
-
----
-
-# 15. Parallelism
-
-The interface should be designed so that parallel execution is possible without changing the algebra.
-
-The most important requirement is independent cursors.
-
-Conceptually:
-
-```text
-                 scan
-                  |
-        +---------+---------+
-        |         |         |
-    partition  partition  partition
-        |         |         |
-      filter    filter    filter
-        |         |         |
-        +---------+---------+
-                  |
-                merge
-```
-
-A future Table may support:
-
-```js
-scan({ partition })
-```
-
-or expose partitions separately.
-
-This should be an extension rather than a requirement of the minimal interface.
-
-The same principle applies to indexes:
-
-```text
-find(...)
-range(...)
-```
-
-should be independently executable.
-
----
-
-# 16. Parallel group and aggregate
-
-`group` should ideally support the functional decomposition:
-
-```text
-partition
-   ↓
-local group/aggregate
-   ↓
-merge
-```
-
-For example:
-
-```text
-GROUP BY state, COUNT(*)
+PROJECT
+  FILTER
+    SOURCE(remote)
 ```
 
 can become:
 
 ```text
-worker 1 → NY: 120
-worker 2 → NY:  80
-worker 3 → NY: 100
-
-merge → NY: 300
-```
-
-This is one reason to keep the relational algebra functional.
-
-Operators should preferably have well-defined composition and reduction semantics rather than depend on mutable global state.
-
----
-
-# 17. Table as a virtual interface
-
-A Table does not imply a particular storage format.
-
-A memory Table:
-
-```js
-const table = {
-  schema,
-  scan() {
-    return cursor(rows)
-  }
-}
-```
-
-A JSON Table:
-
-```js
-const table = {
-  schema,
-  scan() {
-    return jsonCursor(file)
-  }
-}
-```
-
-A remote Table:
-
-```js
-const table = {
-  schema,
-  scan() {
-    return remoteCursor(url)
-  }
-}
-```
-
-All three are valid sources for the same algebra.
-
-This is a central design goal.
-
----
-
-# 18. IODB directory
-
-The IODB namespace resolves Tables lazily.
-
-```js
-const db = IO('mydb/')
-```
-
-Then:
-
-```js
-db.users
-```
-
-represents:
-
-```text
-mydb/users.table.json
-```
-
-but does not need to materialize the file immediately.
-
-The Proxy produces a source node:
-
-```js
-{
-  op: 'source',
-  name: 'users'
-}
-```
-
-Execution eventually resolves:
-
-```text
-source('users')
-      ↓
-IO catalog
-      ↓
-Table
-      ↓
-scan/get/find/range/...
-```
-
-Therefore the query layer remains independent of the filesystem.
-
----
-
-# 19. Relational algebra over Table
-
-The complete conceptual pipeline is:
-
-```text
-                 DX / SQL / API
-                       |
-                       ▼
-                  Query Nodes
-                       |
-                       ▼
-                    optimize
-                       |
-                       ▼
-                 Physical Plan
-                       |
-                       ▼
-                     Table
-                       |
-                       ▼
-                    Cursor
-                       |
-                       ▼
-                 result/page
-```
-
-Example:
-
-```js
-db.users
-  .status('active')
-  .age.gte(18)
-  .pick('id', 'name')
-  .sort('name')
-  .limit(20)()
-```
-
-Initially:
-
-```text
-LIMIT
-  SORT
-    PROJECT
-      FILTER(age >= 18)
-        FILTER(status = active)
-          SOURCE(users)
-```
-
-After optimization, if indexes exist:
-
-```text
-LIMIT
-  SORT
-    PROJECT
-      FILTER(age >= 18)
-        FIND(users, status, active)
-```
-
-Or another physical plan if that is cheaper.
-
-The logical query does not change.
-
----
-
-# 20. Recommended canonical interface
-
-The recommended complete baseline interface is:
-
-```js
-const Table = {
-  schema,
-
-  // fundamental access
-  scan,
-
-  // key/index access
-  get,
-  find,
-  range,
-
-  // aggregate capability
-  count,
-
-  // optional pushed operations
+remote.query(
   filter,
-  group,
+  project
+)
+```
+
+if the remote Table provides that capability.
+
+The logical query remains unchanged.
+
+---
+
+# 74. Delegation Principle
+
+Every layer should delegate rather than duplicate.
+
+```text
+SQL parser
+    → query IR
+
+Query API
+    → query IR
+
+Algebra
+    → logical semantics
+
+Planner
+    → physical strategy
+
+Table
+    → storage capabilities
+
+Storage
+    → actual bytes/indexes
+```
+
+Do not make the planner implement storage.
+
+Do not make the Table implement SQL.
+
+Do not make SQL bypass the planner.
+
+Do not make the executor duplicate storage indexes.
+
+---
+
+# 75. Recommended Implementation Modules
+
+A minimal implementation can be divided into:
+
+```text
+table.js
+cursor.js
+expr.js
+algebra.js
+planner.js
+executor.js
+bitmap.js
+query.js
+sql.js
+```
+
+Initial dependency direction:
+
+```text
+query
+  ↓
+algebra
+  ↓
+planner
+  ↓
+executor
+  ↓
+table
+```
+
+`expr` is shared by:
+
+```text
+query
+algebra
+planner
+executor
+```
+
+`bitmap` is physical and should not leak into logical expressions.
+
+---
+
+# 76. Minimal Pseudocode
+
+## Table
+
+```js
+const table = {
+  schema,
+
+  scan() {
+    return cursor(...)
+  }
 }
 ```
 
-The minimal contract is:
+## Source
+
+```js
+function source(table) {
+  return {
+    op: 'source',
+    table
+  }
+}
+```
+
+## Filter
+
+```js
+function filter(expr, input) {
+  return {
+    op: 'filter',
+    args: [expr],
+    in: input
+  }
+}
+```
+
+## Project
+
+```js
+function project(fields, input) {
+  return {
+    op: 'project',
+    args: [fields],
+    in: input
+  }
+}
+```
+
+## Limit
+
+```js
+function limit(n, input) {
+  return {
+    op: 'limit',
+    args: [n],
+    in: input
+  }
+}
+```
+
+---
+
+# 77. Minimal Execution Pseudocode
+
+```js
+function execute(node) {
+
+  if (node.op === 'source')
+    return node.table.scan()
+
+  if (node.op === 'filter')
+    return filterCursor(
+      execute(node.in),
+      node.args[0]
+    )
+
+  if (node.op === 'project')
+    return projectCursor(
+      execute(node.in),
+      node.args[0]
+    )
+
+  if (node.op === 'limit')
+    return limitCursor(
+      execute(node.in),
+      node.args[0]
+    )
+}
+```
+
+This is sufficient to build the first working engine.
+
+---
+
+# 78. Minimal Planner Pseudocode
+
+```js
+function optimize(node) {
+
+  node = normalize(node)
+
+  node = simplify(node)
+
+  node = optimizeChildren(node)
+
+  if (isPkEquality(node))
+    return makeGet(node)
+
+  if (isIndexedEquality(node))
+    return makeFind(node)
+
+  if (isIndexedRange(node))
+    return makeRange(node)
+
+  return node
+}
+```
+
+The implementation can initially be this simple.
+
+---
+
+# 79. Reference Execution vs Optimized Execution
+
+The engine should conceptually provide two paths:
+
+```text
+reference:
+    logical plan → generic executor
+
+optimized:
+    logical plan → optimizer → physical executor
+```
+
+For every query:
+
+```js
+equal(
+  runReference(query),
+  runOptimized(query)
+)
+```
+
+must hold.
+
+This gives the optimizer a permanent correctness oracle.
+
+---
+
+# 80. Ideal Architecture
+
+The complete conceptual architecture is:
+
+```text
+                 USER
+                  │
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+       JS        SQL       SOML
+        │         │         │
+        └─────────┼─────────┘
+                  ▼
+             QUERY BUILDER
+                  │
+                  ▼
+             LOGICAL IR
+                  │
+                  ▼
+              NORMALIZER
+                  │
+                  ▼
+              OPTIMIZER
+                  │
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+       GET       FIND      RANGE
+        │         │         │
+        └─────────┼─────────┘
+                  ▼
+             BITMAP / INDEX
+                  │
+                  ▼
+                SCAN
+                  │
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+       IODB      MEMORY    REMOTE
+```
+
+Every arrow represents delegation.
+
+---
+
+# 81. What Is Fundamental
+
+The irreducible foundation is surprisingly small:
+
+```text
+Row
+Cursor
+Table
+Node
+Expression
+Planner
+Executor
+```
+
+And the minimum Table contract is:
 
 ```js
 {
@@ -1218,11 +2915,20 @@ The minimal contract is:
 }
 ```
 
-The practical IODB contract is:
+Everything else is acceleration.
+
+This is the key architectural property.
+
+---
+
+# 82. Ideal Physical Foundation
+
+For the intended IODB engine, the recommended Table is:
 
 ```js
 {
   schema,
+
   scan,
   get,
   find,
@@ -1231,62 +2937,283 @@ The practical IODB contract is:
 }
 ```
 
-and future implementations may additionally expose:
+This gives the planner enough information to implement the first serious optimizations:
 
-```js
-{
-  filter,
-  group,
-  sort,
-  project,
-  aggregate,
-  join,
-  ...
-}
+```text
+scan
+get
+find
+range
+count
 ```
 
-only when the underlying storage can execute them beneficially.
+while preserving a universal fallback.
 
 ---
 
-# 21. Fundamental principle
+# 83. Future Physical Extensions
 
-The architecture should preserve this distinction:
+The interface can grow naturally:
 
 ```text
-               SEMANTICS
-                  │
-          relational algebra
-                  │
-      ┌───────────┴───────────┐
-      │                       │
-   filter                  group
-   project                 aggregate
-   sort                    join
-   limit                   union
-      │                       │
-      └───────────┬───────────┘
-                  │
-               optimizer
-                  │
-                  ▼
-              CAPABILITIES
-                  │
-              Table
-                  │
-       ┌──────────┼──────────┐
-       │          │          │
-      scan        get       find
-                             │
-                           range
-                             │
-                           count
+bitmap
+partitions
+ordered scan
+filter pushdown
+project pushdown
+sort pushdown
+group pushdown
+aggregate pushdown
+join pushdown
+statistics
+transactions
+snapshot
 ```
 
-**`{schema, scan}` defines what a Table is capable of semantically.**
+None of these should be required by the logical algebra.
 
-**`get`, `find`, `range`, `count` make it efficient.**
+---
 
-**`filter`, `group`, and other pushed operations are optional physical accelerators.**
+# 84. Implementation Order
 
-This allows the relational engine to remain purely functional while the Table implementation remains a small, replaceable, virtual data source.
+A simple implementation should follow this order.
+
+### Phase 1 — Cursor
+
+Implement:
+
+```text
+Cursor
+next()
+close()
+```
+
+and tests for independent cursors.
+
+### Phase 2 — Table
+
+Implement:
+
+```text
+schema
+scan
+```
+
+using an in-memory array.
+
+### Phase 3 — Expressions
+
+Implement:
+
+```text
+eq
+ne
+gt
+gte
+lt
+lte
+and
+or
+not
+```
+
+### Phase 4 — Algebra
+
+Implement:
+
+```text
+source
+filter
+project
+limit
+offset
+sort
+distinct
+group
+aggregate
+join
+union
+```
+
+### Phase 5 — Reference Executor
+
+Make every operation work using:
+
+```text
+scan
+```
+
+only.
+
+### Phase 6 — Physical Capabilities
+
+Add:
+
+```text
+get
+find
+range
+count
+```
+
+### Phase 7 — Planner
+
+Implement deterministic rewrites:
+
+```text
+PK → GET
+indexed equality → FIND
+indexed range → RANGE
+count → COUNT
+```
+
+### Phase 8 — Bitmap
+
+Add bitmap indexes without modifying the logical algebra.
+
+### Phase 9 — Cost Model
+
+Add statistics and cost estimation.
+
+### Phase 10 — Query API
+
+Add Proxy/fluent syntax.
+
+### Phase 11 — SQL
+
+Compile SQL to the same IR.
+
+---
+
+# 85. First Concrete Target
+
+The first complete end-to-end test should be:
+
+```js
+const table = memoryTable([
+  { id: 1, name: 'Alice', age: 30, state: 'NY' },
+  { id: 2, name: 'Bob',   age: 16, state: 'NY' },
+  { id: 3, name: 'Carol', age: 25, state: 'CA' }
+])
+
+const query =
+  limit(
+    20,
+    project(
+      ['id', 'name'],
+      filter(
+        and(
+          eq('state', 'NY'),
+          gte('age', 18)
+        ),
+        source(table)
+      )
+    )
+  )
+```
+
+Reference result:
+
+```js
+[
+  { id: 1, name: 'Alice' }
+]
+```
+
+Then add:
+
+```js
+table.find
+```
+
+and verify that the optimized plan produces exactly the same result.
+
+Then add:
+
+```js
+table.range
+```
+
+and repeat.
+
+Then bitmap.
+
+The logical query never changes.
+
+---
+
+# 86. Final Contract
+
+The central contract of the entire engine is:
+
+```text
+LOGICAL SEMANTICS
+        ↓
+must remain constant
+        ↓
+PHYSICAL STRATEGY
+        ↓
+may change freely
+```
+
+Therefore:
+
+```text
+                 SAME QUERY
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+      SCAN          INDEX       BITMAP
+        │            │            │
+        └────────────┼────────────┘
+                     ▼
+                SAME RESULT
+```
+
+The engine is successful when increasingly sophisticated storage mechanisms can be added **without increasing the complexity of the relational algebra**.
+
+---
+
+# 87. Core Design Law
+
+> **The algebra expresses semantics.**
+>
+> **The planner expresses strategy.**
+>
+> **The Table exposes capabilities.**
+>
+> **The storage owns physical data structures.**
+>
+> **The executor connects them.**
+
+And, consequently:
+
+> **If a storage engine already knows how to perform an operation efficiently, the relational engine should delegate to it rather than reproduce that knowledge.**
+
+This is the foundation for an engine in which:
+
+```text
+SQL
+JS
+SOML
+future APIs
+       ↓
+   one semantic IR
+       ↓
+   one optimizer
+       ↓
+   many physical strategies
+```
+
+with:
+
+```text
+scan
+index
+range
+bitmap
+parallelism
+remote pushdown
+```
+
+all becoming interchangeable implementation details of the same relational semantics.
