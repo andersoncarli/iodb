@@ -1,6 +1,6 @@
 import IO, { merge, append, assign } from './io-engine.js'
 import { readTrailer, readGenesis } from '../pagedtext/pagedtext.js'
-import { statSync, readFileSync } from 'fs'
+import { statSync, readFileSync, copyFileSync } from 'fs'
 import { join } from 'path'
 
 const PS = 4096
@@ -202,5 +202,75 @@ test('io-engine paged: o .yaml e derivado sob demanda, nao a cada 100 flushes', 
 
     io.close()
     check(statSync(y).size >= pedido, true)   // o close mantem em dia
+  })
+})
+
+// ── feature 4.5 — o .proj sabe ATE ONDE do log ele chegou ──────────────────
+//
+// O guarda de replay era `statSync(f.proj).size > 4096`: um literal, e nao o
+// pageSize do store. Com pagina menor, uma projecao de varias paginas ainda
+// mede menos que 4096 bytes, o guarda a lia como VAZIA, o log inteiro era
+// reaplicado por cima do que ja estava la e todo registro DUPLICAVA.
+//
+// Estes dois testes cobrem os dois lados do mesmo guarda, e por isso usam
+// pagina pequena de proposito: e exatamente a faixa que nenhum teste visitava.
+
+test('io-engine paged: reabrir com pagina pequena nao duplica a projecao', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    const N = 40
+    for (const pageSize of [256, 1024, 4096]) {
+      const base = join(dir, 'log' + pageSize)
+      const io = IO(base, { reduce: append, initial: [], pageSize })
+      io.open()
+      for (let i = 0; i < N; i++) io.in({ seq: i })
+      io.close()
+
+      const re = IO(base, { reduce: append, initial: [], pageSize })
+      re.open()
+      const seqs = [...re.get('#1')]
+        .map(x => Object.values(x)[0])
+        .filter(v => v && typeof v === 'object' && 'seq' in v)
+        .map(v => v.seq)
+      check(seqs.length, N)
+      check(new Set(seqs).size, N)              // sao duplicatas, nao registros a mais
+      check(seqs.every((v, i) => v === i), true)
+    }
+  })
+})
+
+test('io-engine paged: um .proj ATRASADO recupera o delta em vez de perde-lo', async ({ check, withTempDir }) => {
+  await withTempDir(dir => {
+    // Pagina de 4096: e o tamanho em que o guarda ANTIGO de fato pulava o
+    // replay (a projecao passa dos 4096 bytes e ele a via como "em dia"). Com
+    // pagina pequena o guarda antigo erraria para o outro lado e reaplicaria
+    // tudo, o que daria a resposta certa por acidente e o teste nao
+    // discriminaria nada.
+    const base = join(dir, 'stale')
+    const io = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
+    io.open()
+    // 80 chaves com padding: o bastante para a projecao passar de 4096 bytes,
+    // que e o limiar do guarda antigo.
+    const pad = 'x'.repeat(40)
+    for (let i = 0; i < 80; i++) io.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } })
+    io.close()
+    // Guarda a projecao deste momento: ela cobre as 80 primeiras chaves.
+    copyFileSync(base + '.proj', base + '.proj.velho')
+
+    const io2 = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
+    io2.open()
+    for (let i = 80; i < 100; i++) io2.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } })
+    io2.close()
+
+    // Devolve a projecao velha: agora ela esta atrasada em relacao ao log.
+    copyFileSync(base + '.proj.velho', base + '.proj')
+
+    // O guarda antigo pulava o replay inteiro quando o .proj "tinha conteudo",
+    // e as 10 chaves que faltavam sumiam em silencio — o gap que o proprio
+    // comentario do codigo declarava e nao fechava.
+    const re = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
+    re.open()
+    const ks = Object.keys(re.get('#1')).filter(k => k.startsWith('k'))
+    check(ks.length, 100)
+    check(new Set(ks).size, 100)
   })
 })

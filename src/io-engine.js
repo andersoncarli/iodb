@@ -248,6 +248,25 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     })
   }
 
+  /**
+   * Grava a projecao paginada E registra ate onde do log ela chegou.
+   *
+   * Existe porque o `logOffset` tem que andar junto com os bytes, sempre. Havia
+   * quatro chamadas de `__flushPages()` espalhadas (genese, yield a cada 100,
+   * close, e o replay do sync) e um offset atualizado em so algumas delas seria
+   * pior que nenhum — na abertura seguinte ele afirmaria cobertura que o
+   * arquivo nao tem, e o delta faltante sumiria em silencio.
+   *
+   * O offset e o TAMANHO DO `.dash` no instante da gravacao: tudo o que estava
+   * no log ate aqui esta na projecao que acabou de ser escrita.
+   */
+  function flushProjection() {
+    if (!paged) return
+    const ate = existsSync(f.dash) ? statSync(f.dash).size : 0
+    projection.__setLogOffset?.(ate)
+    projection.__flushPages()
+  }
+
   // Incremental read: only bytes since `offset`
   function syncFrom(offset) {
     if (!existsSync(f.dash)) return
@@ -257,33 +276,60 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     const buf = Buffer.alloc(sz - offset)
     readSync(fd, buf, 0, sz - offset, offset)
     closeSync(fd)
-    const recs = buf.toString('utf8').split('\n').filter(Boolean).map(parseLine).filter(Boolean)
+    // Cada linha carrega o offset ABSOLUTO em que comeca no `.dash`. E isso que
+    // permite reaplicar so o delta: sem a posicao, "ja absorvido" nao e uma
+    // pergunta respondivel sobre um registro individual.
+    const texto = buf.toString('utf8')
+    const recs = []
+    let pos = offset
+    for (const linha of texto.split('\n')) {
+      const inicio = pos
+      pos += Buffer.byteLength(linha) + 1
+      if (!linha) continue
+      const rec = parseLine(linha)
+      if (rec) recs.push({ rec, at: inicio })
+    }
     if (paged) {
       // The Proxy is the accumulator: _reduce mutates it in place, writes are
       // buffered, one flush covers the whole delta.
       //
-      // But .proj is a persisted derived artifact. On a full open (offset 0)
-      // where .proj already holds content, it is authoritative up to the log
-      // records it absorbed — replaying the whole log over it would DOUBLE every
-      // record. So the projection replay is skipped when .proj is non-empty and
-      // we are syncing from the top; the index/bitmap replay below still runs,
-      // because that state is rebuilt fresh each open. A stale .proj (fewer
-      // records than the log) is a known gap this sprint does not close — the
-      // real fix is an offset marker in the .proj header, which is 2.4 work.
-      const projHasContent = existsSync(f.proj) && statSync(f.proj).size > 4096
-      if (!(offset === 0 && projHasContent && !_pagedSynced)) {
-        for (const rec of recs) { try { _reduce(projection, rec) } catch { } }
-        projection.__flushPages()
-      }
+      // O `.proj` e artefato DERIVADO: ele vale ate o ponto do log que ja
+      // absorveu, e reaplicar o log inteiro por cima DUPLICA todo registro.
+      // Entao a pergunta e "quanto deste log ja esta aqui dentro?".
+      //
+      // Ela agora e respondida por OFFSET, e nao por tamanho de arquivo. O
+      // guarda anterior era `statSync(f.proj).size > 4096` — um literal, e nao
+      // o `pageSize` do store. Com pagina menor que 4096 uma projecao de varias
+      // paginas ainda mede menos que 4096 bytes, o guarda a lia como vazia, o
+      // log inteiro era reaplicado e todo registro duplicava (medido: 40
+      // escritas -> 80 registros em 2048/1024/512/256/128; so 4096 escapava,
+      // porque ali tudo cabia numa pagina). Era o defeito registrado em
+      // ISSUES/PROJ-REPLAY-ISSUE.md.
+      //
+      // O tamanho nunca foi a pergunta certa: ele e um proxy para "ja tem
+      // conteudo", e o que importa nao e SE tem, e ATE ONDE. O `logOffset` no
+      // rodape do pagedtext responde isso exatamente, sobrevive ao processo, e
+      // fecha junto o gap que o codigo declarava em prosa aqui — um `.proj`
+      // ATRASADO (menos registros que o log) antes era pulado por inteiro e
+      // perdia o resto em silencio; agora o delta que falta e reaplicado.
+      const projAt = existsSync(f.proj) ? (projection.__logOffset?.() ?? 0) : 0
+      // Numa abertura do zero, o que ja esta na projecao e o que comeca ANTES
+      // de `projAt`. Fora isso (sync incremental), tudo o que foi lido e novo
+      // por construcao — `syncFrom` so leu a partir de `offset`.
+      const novos = (offset === 0 && !_pagedSynced)
+        ? recs.filter(r => r.at >= projAt)
+        : recs
+      for (const { rec } of novos) { try { _reduce(projection, rec) } catch { } }
+      if (novos.length) flushProjection()
       _pagedSynced = true
     } else {
-      projection = recs.reduce((acc, rec) => { try { return _reduce(acc, rec) } catch { return acc } }, projection)
+      projection = recs.reduce((acc, { rec }) => { try { return _reduce(acc, rec) } catch { return acc } }, projection)
     }
     if (offset === 0) {
       bmAdd(idx.bitmaps, toBits('0')); bmAdd(idx.bitmaps, toBits('1'))
       idx.records.add('0'); idx.records.add('1')
     }
-    for (const rec of recs) {
+    for (const { rec } of recs) {
       const key = Object.keys(rec)[0], payload = rec[key]
       if (key === '0') { idx.lastKey = '0'; continue }
       if (key === '1') { idx.lastKey = '1'; continue }
@@ -352,7 +398,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
     if (paged) {
       _reduce(projection, { '0': p0 })
       _reduce(projection, { '1': p1 })
-      projection.__flushPages()
+      flushProjection()
     } else {
       projection = _reduce(_reduce(Array.isArray(_initial) ? [] : { ..._initial }, { '0': p0 }), { '1': p1 })
     }
@@ -543,9 +589,7 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       // ── Publish derived state, lock released ─────────────────────────────
       if (t) t.publishStart = t.lockReleased
       saveIndex()                       // arbitrated by lastOffset (see saveIndex)
-      if (yieldFlush) {
-        if (paged) projection.__flushPages()
-      }
+      if (yieldFlush) flushProjection()
 
       // ── Emit after lock released so handlers can write without deadlock ──
       for (const { short, fullKey, payload } of provisional) {
@@ -663,9 +707,10 @@ export function IO(base, { reduce, initial, log: logOverride, type, entity, form
       if (_log.length) flush()
       // Persist the paged projection's buffered writes. Like the .yaml below it
       // is a derived artifact, written once at close rather than per append.
-      if (paged && existsSync(f.dash)) {
-        try { projection.__flushPages() } catch { }
-      }
+      // O `catch {}` mudo SAIU (requisito da 4.5): falha ao gravar a projecao
+      // canonica no fechamento e perda de dado derivado, e engoli-la em
+      // silencio deixava o processo sair como se tivesse gravado.
+      if (paged && existsSync(f.dash)) flushProjection()
       // O YAML final. Agora que ele nao e mais escrito a cada 100 flushes, o
       // `close()` e o unico ponto automatico — e por isso a condicao deixou de
       // olhar o contador: ele nao diz mais nada sobre o YAML estar em dia.

@@ -256,6 +256,15 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
       }
       if (prop === '__isPagedProjection') return true
       if (prop === '__flushPages') return flushPages
+      // QUANTO DO LOG esta projecao ja absorveu. Ela e um artefato DERIVADO do
+      // `.dash`, e quem reabre precisa saber onde parar de reaplicar — senao
+      // reaplica o que ja esta aqui e duplica tudo.
+      //
+      // O numero mora no rodape do store (`logOffset`), entao ele sobrevive ao
+      // fechamento do processo, que e o unico jeito de a resposta valer na
+      // proxima abertura. Ler e escrever passam pelo mesmo lugar.
+      if (prop === '__logOffset') return () => store.logOffset
+      if (prop === '__setLogOffset') return v => { store.logOffset = v }
       if (prop === '__allEntries') return () => isSeq ? allSeq() : allKeyed()
       if (prop === 'length' && isSeq) {
         let n = seqPending.length
