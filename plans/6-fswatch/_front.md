@@ -64,8 +64,14 @@ entram aqui, pela mesma regra que a frente 5 aplica: mudanca de forma nao carreg
 junto.
 
 **A compactacao do `.dash`** e **o indice secundario por path**. Sao lacunas do `iodb`, nao
-do fswatch. Esta frente as **mede** (6.3) e entrega o numero para as frentes 2 e 4; nao as
-resolve.
+do fswatch. Esta frente as **mede** (6.3, com `bun:sqlite` como polo de comparacao) e
+entrega o numero para as frentes 2 e 4; nao as resolve.
+
+**A superficie keyed do adapter SQLite do iodb.** A 6.3 compara os dois engines pela mesma
+interface, e isso exige que `src/adapters/sqlite.js` ganhe `put/remove/all/flush` — mudanca
+do engine, nao do fswatch. Mora na **frente 7 (adapter-parity)**, feature 7.1, que a 6.3
+consome. O `SqliteStore` que o sprint 017 carregou dentro de `fswatch.js` some quando a 7.1
+entrar.
 
 **O backend.** Continua `node:fs.watch`, nao `inotify`. Sem cookie de `MOVED_FROM`/`MOVED_TO`,
 sem deteccao de overflow de fila, sem reconciliacao automatica.

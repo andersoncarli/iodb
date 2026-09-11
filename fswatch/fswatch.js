@@ -402,4 +402,4 @@ const FSWatch = async input => {
   return api
 }
 
-export { FSWatch, parseYaml, normalizeConfig, glob, Filter, MetadataStore, SqliteStore, BACKENDS }
+export { FSWatch, parseYaml, normalizeConfig, glob, Filter, MetadataStore, SqliteStore, BACKENDS, describe }
