@@ -4,10 +4,38 @@ import { statSync, readFileSync } from 'fs'
 import { join } from 'path'
 
 const PS = 4096
+// Pagina pequena: o que estes testes precisam e ATRAVESSAR PAGINAS, e pagina e
+// uma razao entre bytes e pageSize. Encolhendo a pagina, dezenas de registros
+// fazem o que antes exigia centenas — e a escrita por registro (sem batching,
+// com fsync de verdade) continua sendo o caminho exercitado, que e o que a 2.0
+// comprou. O teste fica em milissegundos em vez de segundos.
+//
+// 512 e nao 256, e a razao e um BUG ENCONTRADO ao encolher, nao uma escolha de
+// gosto: o guarda de replay do io-engine.js:273 e
+// `statSync(f.proj).size > 4096` — um literal, e nao o pageSize do store. Com
+// pagina menor que 4096, uma projecao de VARIAS paginas ainda mede menos que
+// 4096 bytes, o guarda a le como vazia, o replay do log roda por cima do que ja
+// estava la e TODO registro duplica (medido: 40 escritas -> 80 registros, em
+// 2048/1024/512/256/128; so 4096 escapa, porque ai tudo cabe numa pagina).
+// Esta registrado em PROJ-REPLAY-ISSUE.md.
+//
+// A consequencia para ESTE arquivo: enquanto o guarda for um literal 4096, os
+// testes que passam pelo io-engine NAO PODEM encolher a pagina — qualquer
+// valor menor cai no defeito, e o que eles mediriam seria o bug e nao a
+// propriedade. Entao aqui a pagina continua 4096 e o que encolhe e a CONTAGEM,
+// ate o minimo que ainda atravessa pagina. Os testes do pagedtext e da
+// projecao tabular, que nao passam pelo engine, usam pagina pequena de fato.
+const PS_MINI = 4096
 
-// Os tres testes que escrevem em volume levam { timeout: 5000 }. Desde que o
-// batching saiu (feature 2.0) cada registro faz um commit REAL, com fsync, e
-// centenas deles nao cabem no default de 1000ms.
+// O `{ timeout: 5000 }` SAIU. Ele era o contorno de uma contagem alta: com
+// centenas de registros e um commit real por registro, o teste nao cabia no
+// default de 1000ms, e a saida tinha sido levantar o teto.
+//
+// Levantar o teto esconde o problema em vez de resolve-lo — e um teto de 5s num
+// teste que afirma correcao, nao desempenho, e um teste que ninguem percebe
+// ficar lento. A contagem desceu para o minimo que ainda exibe a propriedade
+// (80 registros onde o invariante e multi-pagina, 40 onde e so atravessar), e o
+// arquivo inteiro voltou a caber em ~1s — o orcamento de UM teste.
 //
 // O teto acompanha trabalho real, nao mascara crescimento. O custo por registro
 // e PLANO — 100 registros: 1.10ms/rec, 200: 1.00, 400: 0.96 — que e exatamente a
@@ -40,7 +68,8 @@ test('io-engine paged: kv round-trips like the plain path', async ({ check, with
 test('io-engine paged: matches the plain path key-for-key', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const runs = {}
-    for (const [label, pageSize] of [['plain', 0], ['paged', 4096]]) {
+    const N = 40
+    for (const [label, pageSize] of [['plain', 0], ['paged', PS_MINI]]) {
       const base = join(dir, label)
       const io = IO(base, { reduce: merge, initial: {}, pageSize })
       io.open()
@@ -48,8 +77,8 @@ test('io-engine paged: matches the plain path key-for-key', async ({ check, with
       // rewrite, so one flush per record was O(n^2) and these tests had to
       // batch around it. The commit is now O(dirty pages), so the per-record
       // path is the one worth exercising.
-      for (let i = 0; i < 180; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 })
-      io.in({ k100: null })          // tombstone
+      for (let i = 0; i < N; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 })
+      io.in({ k020: null })          // tombstone
       io.close()
 
       const re = IO(base, { reduce: merge, initial: {}, pageSize })
@@ -60,52 +89,57 @@ test('io-engine paged: matches the plain path key-for-key', async ({ check, with
       )
     }
     check(JSON.stringify(runs.paged), JSON.stringify(runs.plain))
-    check('k100' in runs.paged, false)         // tombstone survived
+    check('k020' in runs.paged, false)         // tombstone survived
     check(runs.paged.k000, 0)
-    check(runs.paged.k179, 358)
+    const ultima = 'k' + String(N - 1).padStart(3, '0')
+    check(runs.paged[ultima], (N - 1) * 2)
   })
-}, { timeout: 5000 })
+})
 
 test('io-engine paged: append preserves order and application semantics', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const base = join(dir, 'log')
-    const io = IO(base, { reduce: append, initial: [], pageSize: 4096 })
+    const N = 40
+    const io = IO(base, { reduce: append, initial: [], pageSize: PS_MINI })
     io.open()
-    for (let i = 0; i < 200; i++) io.in({ seq: i })
+    for (let i = 0; i < N; i++) io.in({ seq: i })
     io.close()
 
-    const re = IO(base, { reduce: append, initial: [], pageSize: 4096 })
+    const re = IO(base, { reduce: append, initial: [], pageSize: PS_MINI })
     re.open()
     const s = re.get('#1')
     // append stores each record as { <key>: payload }; genesis contributes
-    // #0/#1, then 200 { seq: i } payloads under allocated keys.
+    // #0/#1, then N { seq: i } payloads under allocated keys.
     const seqs = [...s]
       .map(x => Object.values(x)[0])
       .filter(v => v && typeof v === 'object' && 'seq' in v)
       .map(v => v.seq)
-    check(seqs.length, 200)
+    check(seqs.length, N)
     check(seqs[0], 0)
-    check(seqs[199], 199)
+    check(seqs[N - 1], N - 1)
     check(seqs.every((v, i) => v === i), true)   // application order preserved
   })
-}, { timeout: 5000 })
+})
 
 test('io-engine paged: .proj file is 4096-aligned', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const base = join(dir, 'store')
-    const io = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
+    const io = IO(base, { reduce: merge, initial: {}, pageSize: PS_MINI })
     io.open()
-    for (let i = 0; i < 400; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } })
+    // 80 e o MINIMO que produz duas paginas com estes registros (medido: 60 da
+    // uma, 80 da duas). O teste afirma multi-pagina, entao 80 e o menor numero
+    // que ainda o afirma — eram 400.
+    for (let i = 0; i < 80; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } })
     io.close()
 
     const size = statSync(base + '.proj').size
-    check(size % PS === 0, true)
+    check(size % PS_MINI === 0, true)
     const header = readGenesis(base + '.proj')
     check(header.magic, 'PAGEDTEXT')
     // O header e genesis; a contagem de paginas esta no rodape.
     check(readTrailer(base + '.proj').pages.length > 1, true)   // genuinely multi-page
   })
-}, { timeout: 5000 })
+})
 
 test('io-engine paged: .yaml still readable and correct', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
@@ -142,14 +176,20 @@ test('io-engine paged: verify() chain stays valid', async ({ check, withTempDir 
 // de leitura humana que talvez ninguem abra.
 //
 // O arquivo existe desde a genese do store, entao o teste nao pergunta "existe?"
-// e sim "acompanha?": apos 250 escritas ele continua no tamanho da genese, e so
-// cresce quando alguem pede.
+// e sim "acompanha?": depois de escritas SUFICIENTES ele continua no tamanho da
+// genese, e so cresce quando alguem pede.
+//
+// "Suficientes" aqui tem um piso real, e por isso este e o unico numero que nao
+// desceu ao minimo trivial: o comportamento antigo reescrevia o yaml a cada 100
+// flushes, entao o teste precisa PASSAR de 100 para que "nao cresceu sozinho"
+// afirme alguma coisa. 120 cruza o limiar com folga; 250 so pagava mais caro
+// pela mesma prova.
 test('io-engine paged: o .yaml e derivado sob demanda, nao a cada 100 flushes', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const base = join(dir, 'store')
     const io = IO(base, { reduce: assign, initial: {}, pageSize: PS })
     io.open()
-    for (let i = 0; i < 250; i++) io.in({ [`k${i}`]: { v: i } })
+    for (let i = 0; i < 120; i++) io.in({ [`k${i}`]: { v: i } })
 
     const y = base + '.yaml'
     const parado = statSync(y).size
@@ -158,7 +198,7 @@ test('io-engine paged: o .yaml e derivado sob demanda, nao a cada 100 flushes', 
     io.yaml()                          // quem quer olhar, pede
     const pedido = statSync(y).size
     check(pedido > parado, true)
-    check(pedido > 2000, true)         // a projecao inteira, agora sim
+    check(pedido > 1000, true)         // a projecao inteira, agora sim
 
     io.close()
     check(statSync(y).size >= pedido, true)   // o close mantem em dia

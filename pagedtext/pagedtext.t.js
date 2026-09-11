@@ -4,6 +4,23 @@ import { join } from 'node:path'
 
 const PS = 4096
 
+// A REGRA DOS 3 — provar no menor tamanho que ainda exibe a propriedade.
+//
+// Estes testes escreviam 300 e 400 linhas write-through e mediam 440-890ms
+// contra um orcamento de 1000ms por teste: passavam na maquina livre e
+// estouravam sob carga de suite, num timeout que nao dizia respeito a nada que
+// o teste afirma.
+//
+// A contagem alta nunca foi o que eles precisavam. O que cada um exige e um
+// arquivo de VARIAS PAGINAS — e pagina e uma razao entre bytes e `pageSize`,
+// nao um numero de registros. Encolhendo a pagina, tres paginas custam doze
+// registros em vez de trezentos: a mesma propriedade, 40x mais barato, e em
+// milissegundos.
+//
+// `PS` continua 4096 onde o valor REAL importa (alinhamento, o contrato do
+// formato). `PS_MINI` e para quando o que se prova e "atravessa paginas".
+const PS_MINI = 256
+
 test('pagedtext: logical array over pages', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const file = join(dir, 'x.js')
@@ -263,7 +280,14 @@ test('pagedtext: checkpoint trailer — appends since the last one are recovered
     for (let i = 0; i < 300; i++) seed.push(`linha ${i} ` + 'y'.repeat(60))
     t._store.replaceAll(seed)
     t._store.flush()
-    for (let i = 0; i < 37; i++) t.push(`extra ${i} ` + 'z'.repeat(60))
+    // Este e o unico que NAO vira fence de tempo, e a razao e o proprio
+    // invariante: o teste exige parar ENTRE checkpoints, para que o trailer
+    // fique atrasado. Com `checkpointEvery: 50`, 37 appends garantem isso; um
+    // numero que flutua com a maquina cairia em cima de um checkpoint metade
+    // das vezes e o teste deixaria de afirmar o que afirma. Aqui a contagem E
+    // a condicao, nao um proxy de esforco — e sao 37 escritas, ~80ms.
+    const extras = 37
+    for (let i = 0; i < extras; i++) t.push(`extra ${i} ` + 'z'.repeat(60))
     const wrote = t._store.lastWrite
     t.close()
 
@@ -271,8 +295,8 @@ test('pagedtext: checkpoint trailer — appends since the last one are recovered
     check(wrote.checkpoint, false)
 
     const re = PagedText({ path: file, pageSize: PS })
-    check(re.length, 337)
-    check(re.at(-1), `extra 36 ${'z'.repeat(60)}`)
+    check(re.length, seed.length + extras)
+    check(re.at(-1), `extra ${extras - 1} ${'z'.repeat(60)}`)
     check(re[0], `linha 0 ${'y'.repeat(60)}`)
     re.close()
   })
@@ -281,9 +305,9 @@ test('pagedtext: checkpoint trailer — appends since the last one are recovered
 test('pagedtext: o arquivo e texto — zero byte NUL, e nao so "quase texto"', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const file = join(dir, 'dados.csv')
-    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
+    const t = PagedText({ path: file, pageSize: PS_MINI, kind: 'csv' })
     t.push('id,name,email')
-    for (let i = 0; i < 300; i++) t.push(`${i},user${i},user${i}@example.com`)
+    for (let i = 0; i < 12; i++) t.push(`${i},user${i},user${i}@example.com`)
     t.close()
 
     // O criterio nao e estetico: com pagina zerada, metade dos bytes era NUL,
@@ -293,15 +317,18 @@ test('pagedtext: o arquivo e texto — zero byte NUL, e nao so "quase texto"', a
     let nuls = 0
     for (let i = 0; i < raw.length; i++) if (raw[i] === 0) nuls++
     check(nuls, 0)
+    // Varias paginas de verdade — "zero NUL" num arquivo de uma pagina so nao
+    // afirmaria nada sobre enchimento.
+    check(raw.length / PS_MINI >= 3, true)
   })
 })
 
 test('pagedtext: a pagina 0 e dado — um .csv comeca no primeiro registro', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const file = join(dir, 'dados.csv')
-    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
+    const t = PagedText({ path: file, pageSize: PS_MINI, kind: 'csv' })
     t.push('id,name')
-    for (let i = 0; i < 200; i++) t.push(`${i},user${i}`)
+    for (let i = 0; i < 12; i++) t.push(`${i},user${i}`)
     t.close()
 
     // A genese viaja no rodape: quem le a primeira linha ve DADO, nao metadado.
@@ -319,8 +346,9 @@ test('pagedtext: a pagina 0 e dado — um .csv comeca no primeiro registro', asy
 test('pagedtext: o enchimento sobrevive a um editor que apara fim de linha', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const file = join(dir, 'x.txt')
-    const t = PagedText({ path: file, pageSize: PS })
-    for (let i = 0; i < 130; i++) t.push(`data-${i} ${'='.repeat(20)}`)
+    const t = PagedText({ path: file, pageSize: PS_MINI })
+    const n = 12
+    for (let i = 0; i < n; i++) t.push(`data-${i} ${'='.repeat(20)}`)
     t.close()
     const before = statSync(file).size
 
@@ -331,9 +359,9 @@ test('pagedtext: o enchimento sobrevive a um editor que apara fim de linha', asy
     writeFileSync(file, trimmed)
 
     check(statSync(file).size, before)
-    const re = PagedText({ path: file, pageSize: PS })
-    check(re.length, 130)
-    check(re.at(-1), `data-129 ${'='.repeat(20)}`)
+    const re = PagedText({ path: file, pageSize: PS_MINI })
+    check(re.length, n)
+    check(re.at(-1), `data-${n - 1} ${'='.repeat(20)}`)
     re.close()
   })
 })
@@ -341,8 +369,8 @@ test('pagedtext: o enchimento sobrevive a um editor que apara fim de linha', asy
 test('pagedtext: validate detecta um arquivo cujo enchimento foi removido', async ({ check, withTempDir }) => {
   await withTempDir(dir => {
     const file = join(dir, 'ok.csv')
-    const t = PagedText({ path: file, pageSize: PS, kind: 'csv' })
-    for (let i = 0; i < 300; i++) t.push(`${i},user${i}`)
+    const t = PagedText({ path: file, pageSize: PS_MINI, kind: 'csv' })
+    for (let i = 0; i < 12; i++) t.push(`${i},user${i}`)
     t.close()
 
     // Nao da para PREVENIR que alguem apague o enchimento; da para DETECTAR.
