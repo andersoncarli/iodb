@@ -1,6 +1,9 @@
 import { DB } from './db-factory.js'
 import { join } from 'path'
 import { mkdirSync, writeFileSync } from 'fs'
+import { TabularProjection } from './tabular-projection.js'
+import { isTable, capabilities } from './table/contract.js'
+import { toArray } from './table/cursor.js'
 
 test('DB Factory: Adapter Resolution',  async ({check, withTempDir}) => {
   await withTempDir(async (tmp) => {
@@ -42,5 +45,27 @@ test('DB Factory: open collection from template',  async ({check, withTempDir}) 
     check(task.id, '1.1.1')
     check(task.title, 'First task')
     check(task.priority, 'critical')
+  })
+})
+
+test('DB Factory: factory.table(name) resolve uma Table do contrato (8.7)', async ({ check, withTempDir }) => {
+  await withTempDir(async (tmp) => {
+    const factory = DB({ path: tmp })
+    const dbDir = join(tmp, 'DB')
+    mkdirSync(dbDir, { recursive: true })
+
+    const proj = TabularProjection(join(dbDir, 'users.csv'), { schema: 'id:int!,name:str@,age:int' })
+    proj.push({ id: 1, name: 'Ana', age: 26 })
+    proj.push({ id: 2, name: 'Bob', age: 31 })
+    proj.flush()
+
+    const t = factory.table('users')
+    check(isTable(t), true)
+    check(capabilities(t).has.get, true)
+    const rows = toArray(t.scan()).map(r => r.name).sort()
+    check(rows, ['Ana', 'Bob'])
+
+    // mesma sessao da factory, mesmo nome -> mesma Table (cache)
+    check(factory.table('users') === t, true)
   })
 })

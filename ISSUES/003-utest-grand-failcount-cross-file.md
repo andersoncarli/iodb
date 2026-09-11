@@ -57,3 +57,18 @@ esse filtro em vez de `check(r.exitCode, 0)` sozinho, por causa deste defeito.
 
 Desconhecida — pediria isolar `grand`/`summary()` por worker/arquivo dentro do `utest`,
 fora do escopo do `iodb`.
+
+## Nota — como isto foi encontrado
+
+Descoberto por acidente: os arquivos `.t.js` desta feature tinham um bug PROPRIO,
+`withTempDir(dir => {...})` chamado sem `return` dentro do corpo de `test()`. Como
+`withTempDir` e assincrono e o runner so `await`s quando a funcao de teste devolve uma
+Promise (`runner.js:84`, `if (r instanceof Promise) await r`), os testes terminavam
+"vazios" (sincronos, sem devolver nada) e o corpo real — dentro do `withTempDir` — rodava
+DEPOIS, solto, sem o runner aguardar. Isso mascarou o defeito por um tempo: testes com
+`check()` errados ainda apareciam verdes, porque o `check()` nunca era observado dentro do
+ciclo de vida do teste. Depois de corrigir o `return` em todos os `.t.js` afetados,
+`page-cursor.t.js` passou a mostrar `checks:2018` (em vez de 8) quando rodado ao lado de
+`tabular-table.t.js` — foi so ai que o defeito do `grand` ficou visivel e isolavel.
+A licao: um `check()` "verde" com `withTempDir` sem `return` awaited pode nao ter rodado
+dentro do teste que o runner contabilizou.

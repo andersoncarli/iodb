@@ -15,6 +15,7 @@ import IO, { merge, append, assign } from './io-engine.js'
 import { TRANSITION, ON } from '../../utils/src/bus.js'
 import { findProjectRoot } from './find-root.js'
 import { ADAPTERS, sqlite, NodeAdapter } from './adapters/index.js'
+import { catalogExecutor } from './table/catalog.js'
 
  let _globalDB = null
  export function getGlobalDB() { return _globalDB }
@@ -394,6 +395,7 @@ function createFactory(root, opts = {}) {
   const registry = new Map()
   const node = NodeAdapter(base, opts)
   node.open()
+  const tableCatalog = catalogExecutor(base)
 
   const factory = {
     ...node, // Mixin NodeAdapter capabilities (has, get, ls, ...)
@@ -473,8 +475,13 @@ function createFactory(root, opts = {}) {
     /** Merge-reduced store */
     store: (name, o) => factory.collection(`${name} yaml store`, o),
 
-    /** Upsert-by-id table (.yaml) */
-    table: (name, o) => factory.collection(`${name} yaml table`, o),
+    /** Table do contrato (8.7): resolve `${name}.csv`/`${name}.dash` em
+     *  `base` preguicosamente, na primeira chamada -- so entao toca disco.
+     *  Cacheada por nome dentro da sessao da factory. O preset `table:` do
+     *  BACKENDS (upsert-by-id em yaml) continua existindo pra quem pede a
+     *  assinatura `'nome yaml table'` por string; so o atalho `.table()`
+     *  muda (sem chamadores reais no repo, medido antes deste sprint). */
+    table: (name) => tableCatalog.resolve({ op: 'source', name }),
 
     /** JS Map mirroring */
     map: (name, o) => factory.collection(`${name} json map`, o),

@@ -52,7 +52,7 @@ import { PagedProjection, materialize } from './paged-projection.js'
 // store compensates for nothing — so it is a flat constant again (LOCK_TIMEOUT), and
 // the constant is justified by the measurement rather than picked by hand.
 
-function parseLine(line) {
+export function parseLine(line) {
   if (!line || typeof line !== 'string') return null
   line = line.trim()
   if (!line) return null

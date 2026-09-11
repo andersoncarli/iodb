@@ -35,6 +35,12 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
   roda neste projeto; reportado em `usecases/14-IODB.md` e ainda aberto
 - [sprint] `sprint doctor` nao verifica que o comando de `test` resolve — um `test` quebrado e
   indistinguivel de um `test` nunca rodado (reforca o item acima)
+- [utest] agregado global `grand` (exit code) conta `failed`/`exception` vazados entre
+  arquivos concorrentes — `page-cursor.t.js` + `tabular-table.t.js` juntos derrubam o exit
+  code mesmo com todo `state` `passed` — [ISSUES/003](ISSUES/003-utest-grand-failcount-cross-file.md)
+- [iodb] `src/fixtures/tabular-pre-8.2.csv` foi gerado sem `pageSize` pequeno e virou 2633
+  linhas de enchimento de pagina — regenerado (30 linhas), mas ainda STAGED, nao commitado
+  — decisao pendente do usuario — [ISSUES/004](ISSUES/004-fixture-tabular-pre-8-2-tamanho.md)
 
 ## DOING
 
@@ -42,7 +48,9 @@ _(vazio)_
 
 ## BLOCKED
 
-_(vazio)_
+- [iodb] `src/fixtures/tabular-pre-8.2.csv` sumiu do disco duas vezes na sessao 2026-09-11,
+  sem comando explicito que o apagasse — causa raiz nao isolada, intermitente —
+  [ISSUES/005](ISSUES/005-fixture-desaparece-intermitente.md)
 
 ## DONE
 

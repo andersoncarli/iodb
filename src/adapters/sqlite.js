@@ -85,6 +85,22 @@ export function SqliteCollection(filePath, opts = {}) {
       return (params !== undefined) ? q.all(params) : q.all()
     },
 
+    /** Cursor real do driver (`stmt.iterate()`), nao um array embrulhado --
+     *  quem consome pode parar a meio sem o driver ter buscado o resto.
+     *  Base para `scan()` da Table (8.6): `query()`/`all()` materializam,
+     *  isto nao.
+     *
+     *  `db.prepare()`, nao `db.query()`: `query()` cacheia a Statement pelo
+     *  texto do SQL, entao duas chamadas com o mesmo SQL devolvem a MESMA
+     *  Statement e `.iterate()` compartilha o cursor do driver -- dois scans
+     *  concorrentes veriam a posicao um do outro (lei da reentrancia, 8.1).
+     *  `prepare()` sempre da uma Statement nova. */
+    iterate(sql, params) {
+      if (!db) this.open()
+      const stmt = db.prepare(sql)
+      return (params !== undefined) ? stmt.iterate(params) : stmt.iterate()
+    },
+
     /** Execute a statement */
     run(sql, params) {
       if (!db) this.open()
