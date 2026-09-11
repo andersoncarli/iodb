@@ -2,7 +2,7 @@
 front: 6
 keyword: fswatch
 title: fswatch — o primeiro consumidor externo do iodb
-state: active
+state: confirmed
 updated: 2026-09-10
 ---
 # [6] fswatch — o primeiro consumidor externo do iodb
