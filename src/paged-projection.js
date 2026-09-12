@@ -160,6 +160,41 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
     return merged
   }
 
+  // ---- incremental key index (feature 1.6) ------------------------------
+  //
+  // The old flushPages() re-derived the whole sorted key list from disk on
+  // every flush (via allKeyed()), which is O(store) — decoding every page to
+  // find where ONE dirty key belongs. A keyed projection is sorted, so an
+  // insert can only shift keys AFTER it; keys strictly before the smallest
+  // dirty key never move. `keyIndex` keeps that ordered key list alive across
+  // flushes so a flush only has to touch the suffix from the first affected
+  // key onward, not read-decode the whole store to find it.
+  let keyIndex = null   // string[] sorted, or null until first built
+
+  function buildKeyIndex() {
+    const keys = []
+    for (let i = 0; i < pageCount(); i++) {
+      for (const [k] of pageEntries(i)) keys.push(k)
+    }
+    keys.sort()
+    return keys
+  }
+
+  function ensureKeyIndex() {
+    if (keyIndex === null) keyIndex = buildKeyIndex()
+    return keyIndex
+  }
+
+  function lowerBound(arr, key) {
+    let lo = 0, hi = arr.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (arr[mid] < key) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+
   function allSeq() {
     const out = []
     for (let i = 0; i < pageCount(); i++) out.push(...pageEntries(i))
@@ -195,24 +230,65 @@ export function PagedProjection(file, { layout = 'keyed', pageSize = PAGE_SIZE, 
   /**
    * Commit the pending change-set.
    *
-   * The re-render of the LINES walks the whole logical content, and it has to:
-   * a keyed projection is sorted, so inserting one key can shift every later
-   * one across page boundaries. That part is O(store) by nature.
+   * A keyed projection is sorted, so inserting a key can only shift keys AFTER
+   * it — everything strictly before the smallest dirty key is untouched, both
+   * in value and in position. `keyIndex` (feature 1.6) keeps the sorted key
+   * list alive across flushes, so re-rendering the lines only means: binary
+   * search for the cut, keep the prefix as-is, decode+re-encode+re-sort just
+   * the suffix. Before 1.6 this method rebuilt the ENTIRE key list from disk
+   * (decoding every page) on every flush — see ISSUES/007 for the measurement.
    *
-   * What must NOT be O(store) is the WRITE. `replaceAll` would mark every page
-   * dirty and hand the store a full rewrite, which throws away exactly what
-   * feature 2.0 bought — measured, that made cost per write grow 15.7x as the
-   * file grew 13.5x. So the new page contents are diffed against what is
-   * already on disk, and only the pages that actually differ are handed over.
-   * The store then writes those, plus the header.
+   * What must NOT be O(store) is the WRITE either. `replaceAll` would mark
+   * every page dirty and hand the store a full rewrite, which throws away
+   * exactly what feature 2.0 bought — measured, that made cost per write grow
+   * 15.7x as the file grew 13.5x. So the new page contents are diffed against
+   * what is already on disk, and only the pages that actually differ are
+   * handed over. The store then writes those, plus the header.
    */
   function flushPages() {
     let lines
     if (isSeq) {
       lines = allSeq().map(encodeSeq)
+    } else if (pending.size === 0) {
+      lines = []
     } else {
-      const merged = allKeyed()
-      lines = [...merged.keys()].sort().map(k => encodeKeyed(k, merged.get(k)))
+      const idx = ensureKeyIndex()
+
+      let minKey = null
+      for (const k of pending.keys()) if (minKey === null || k < minKey) minKey = k
+      const cut = lowerBound(idx, minKey)
+
+      // Prefix: whole PAGES entirely before the cut are copied as raw text —
+      // no decode, no re-encode, they are byte-identical to what is already
+      // on disk. The cut key (idx[cut]) may share a page with earlier keys
+      // (splitKeys only marks page STARTS), so the safe boundary is the page
+      // BEFORE the one that contains idx[cut] — not the page of idx[cut-1].
+      const cutPage = cut < idx.length ? pageForKey(idx[cut]) : pageCount()
+      const pagesBefore = Math.max(0, cutPage)
+      const prefixLines = []
+      for (let i = 0; i < pagesBefore; i++) prefixLines.push(...(store.readPage(i) || []))
+      const prefixKeyCount = pagesBefore > 0
+        ? prefixLines.filter(l => l !== '' && !/^ +$/.test(l)).length
+        : 0
+      const prefixKeys = idx.slice(0, prefixKeyCount)
+
+      // Suffix: everything from the first key NOT covered by a whole prefix
+      // page onward, merged with pending (deletes removed, new keys
+      // inserted), then re-sorted — the only part genuinely proportional to
+      // the shifted range, not to the whole store.
+      const tail = new Map()
+      for (let i = pagesBefore; i < pageCount(); i++) {
+        for (const [k, v] of pageEntries(i)) tail.set(k, v)
+      }
+      for (const [k, v] of pending) {
+        if (v === DELETED) tail.delete(k)
+        else tail.set(k, v)
+      }
+      const tailKeys = [...tail.keys()].sort()
+      const tailLines = tailKeys.map(k => encodeKeyed(k, tail.get(k)))
+
+      lines = [...prefixLines.map(l => l + '\n'), ...tailLines]
+      keyIndex = [...prefixKeys, ...tailKeys]
     }
     // The codec's lines carry their own trailing newline; the store's logical
     // unit is a line WITHOUT one.
