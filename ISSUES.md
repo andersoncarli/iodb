@@ -15,12 +15,6 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
 
 ## TODO
 
-- [sprint] `sprint test` executa entradas `*.eval.js` do `verify_tests` como script `bun` e
-  quebra o degrau — [ISSUES/001](ISSUES/001-sprint-test-eval-js-em-verify-tests.md)
-- [sprint] 6.1 e 6.2 tem `bun plans/.../N.F.eval.js` no `verify_tests` (malformado, contra a
-  convencao) — tirar a linha; fica so a suite utest
-- [sprint] `docs-check.js` loop da raiz nao filtra diretorios; um dir `.md` na raiz crasha
-  `EISDIR` — [ISSUES/002](ISSUES/002-sprint-close-docs-check-eisdir.md)
 - [utest] dois caminhos posicionais: so o primeiro roda, em silencio — `UTEST-ISSUE.md`
 - [sprint] politica: `ISSUES.md` como registro de QA/kanban deveria ser parte do metodo
   (proposto nesta thread; nao implementado)
@@ -35,19 +29,6 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
   roda neste projeto; reportado em `usecases/14-IODB.md` e ainda aberto
 - [sprint] `sprint doctor` nao verifica que o comando de `test` resolve — um `test` quebrado e
   indistinguivel de um `test` nunca rodado (reforca o item acima)
-- [utest] agregado global `grand` (exit code) conta `failed`/`exception` vazados entre
-  arquivos concorrentes — `page-cursor.t.js` + `tabular-table.t.js` juntos derrubam o exit
-  code mesmo com todo `state` `passed` — [ISSUES/003](ISSUES/003-utest-grand-failcount-cross-file.md)
-- [iodb] `src/fixtures/tabular-pre-8.2.csv` foi gerado sem `pageSize` pequeno e virou 2633
-  linhas de enchimento de pagina — regenerado (30 linhas), mas ainda STAGED, nao commitado
-  — decisao pendente do usuario — [ISSUES/004](ISSUES/004-fixture-tabular-pre-8-2-tamanho.md)
-- [iodb] `flushPages()` re-renderiza a projecao INTEIRA a cada flush (ordena e re-encoda toda
-  chave); a ESCRITA ja e diffada por pagina, mas o re-render nao — com 400 entries no store,
-  acrescentar UM custa 86ms. E o teto que sobra depois das correcoes do fswatch abaixo, e o
-  que ainda impede o fswatch de ser a fonte de arvore padrao de um runner (indexar custa
-  ~2.5ms/entry contra 0.03ms de um `readdirSync`). O comentario do proprio
-  `replacePagesDiffed` assume o O(store) como "by nature" — mudar isso precisa de sprint
-  proprio na frente do engine — detalhe em `utest/ISSUES/002-iodb-flush-o-store.md`
 - [iodb] `renderPage()` do pagedtext repete uma unidade pequena de enchimento (` ,\n`) em
   vez de um unico campo largo — proposta do usuario, FORA do escopo de qualquer sprint
   aberto (mexe em nucleo compartilhado por 6 features ja 🔵); precisa de sprint proprio na
@@ -65,6 +46,15 @@ _(vazio)_
 
 ## DONE
 
+- [iodb] `flushPages()` re-renderizava a projecao INTEIRA a cada flush (decodificava toda
+  pagina + ordenava + re-encodava toda chave), so para achar onde UMA chave dirty entra numa
+  lista ordenada — 86ms para acrescentar 1 entry a um store de 400. Resolvido na feature 1.6
+  (sprint 033): `keyIndex` (lista ordenada de chaves) mantido vivo entre flushes; o prefixo
+  antes da menor chave suja e copiado como texto CRU (sem decode/encode), so o sufixo
+  deslocado e recomputado. Medido: "add no fim" ficou ~flat conforme N cresce 8x (razao
+  1.44x para N=400→3200, contra o crescimento proporcional ao store antes) — detalhe em
+  [ISSUES/007](ISSUES/007-flush-incremental-poc.md), cruzado com
+  `utest/ISSUES/002-iodb-flush-o-store.md` (que documentou o teto primeiro).
 - [fswatch] tres defeitos de performance/contrato corrigidos em 2026-09-11, com o `utest`
   como primeiro cliente real (autorizado pelo usuario). Detalhe forense em
   `utest/ISSUES/001`, `003` e `004`:
@@ -83,3 +73,6 @@ _(vazio)_
   a projecao ao reabrir com pagina menor — resolvido na feature 4.5 (sprint 022): o guarda
   virou comparacao de `logOffset`, e o `.proj` atrasado passou a recuperar o delta em vez
   de perde-lo — [ISSUES/PROJ-REPLAY-ISSUE.md](ISSUES/PROJ-REPLAY-ISSUE.md)
+- [iodb] `src/fixtures/tabular-pre-8.2.csv` foi gerado sem `pageSize` pequeno e virou 2633
+  linhas de enchimento de pagina — regenerado (30 linhas, md5 `a32adc31...`), commitado em
+  `9c58e18` — [ISSUES/004](ISSUES/004-fixture-tabular-pre-8-2-tamanho.md)

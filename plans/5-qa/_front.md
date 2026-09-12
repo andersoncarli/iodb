@@ -1,11 +1,11 @@
 ---
 front: 5
-keyword: refactorings
-title: Refactorings — mudancas de forma que nao mudam comportamento
+keyword: qa
+title: QA & Refactorings — mudancas de forma e manutencao do trilho que nao mudam comportamento de produto
 state: confirmed
-updated: 2026-09-10
+updated: 2026-09-11
 ---
-# [5] refactorings — mudancas de forma que nao mudam comportamento
+# [5] qa & refactorings — mudancas de forma e manutencao do trilho que nao mudam comportamento de produto
 
 A frente das mudancas cujo criterio de sucesso e **nada mudou**: a arvore fica mais
 legivel, os imports fazem sentido, os nomes dizem o que a coisa e — e a suite continua

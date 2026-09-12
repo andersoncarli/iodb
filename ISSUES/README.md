@@ -14,14 +14,12 @@ Um arquivo por defeito, nome `NNN-slug.md` em sequencia numerica. Formato: um `#
 frase do defeito, depois `## Sintoma`, `## Diagnostico` (arquivo:linha da causa),
 `## Contorno` (o que se faz enquanto dura), e `## Correcao` quando ela e conhecida.
 
+Itens 001-003 (todos sobre `sprint`/`utest`, nao sobre `iodb`) migraram para os repositorios
+donos — `~/sprint-cli/ISSUES/001,002` e `~/utest/ISSUES/007` — pela mesma regra que justifica
+este diretorio: reportar onde vive o codigo, nao onde o defeito foi visto.
+
 ## Indice
 
-- [001-sprint-test-eval-js-em-verify-tests.md](001-sprint-test-eval-js-em-verify-tests.md) —
-  `sprint test` executa `bun <arquivo>.eval.js` como script e quebra; derrubou a 6.1 de 🔵.
-- [002-sprint-close-docs-check-eisdir.md](002-sprint-close-docs-check-eisdir.md) —
-  `sprint close`/`sprint docs` crasham `EISDIR` num diretorio `.md` na raiz.
-- [003-utest-grand-failcount-cross-file.md](003-utest-grand-failcount-cross-file.md) —
-  `utest` vaza contagem de checks entre arquivos concorrentes, derruba o exit code.
 - [004-fixture-tabular-pre-8-2-tamanho.md](004-fixture-tabular-pre-8-2-tamanho.md) —
   fixture da 8.2 gerado sem `pageSize` pequeno virou 2633 linhas de enchimento.
 - [005-fixture-desaparece-intermitente.md](005-fixture-desaparece-intermitente.md) —

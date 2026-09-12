@@ -32,10 +32,8 @@ trailer de metadados do PagedText sem quebrar). Resultado: 30 linhas, legivel.
 Md5 mudou de `263583b04e33a06ffdec61025ac4fbf7` para `a32adc3199b302d5c321d65b49c09845`
 — `plans/8-table/8.4.eval.js` ja foi atualizado com o novo hash.
 
-**Estado no fim da sessao 2026-09-11**: o arquivo regenerado esta STAGED (`git status`
-mostra `M`), NAO commitado — o commit `d0d3f9c` ainda tem a versao de 2633 linhas. Fica
-pendente de decisao/commit do usuario na proxima sessao (ver handoff
-`handoffs/260911-031-frente-8-table.md`).
+**Resolvido**: o fixture regenerado (30 linhas, md5 `a32adc31...`) foi commitado em
+`9c58e18`, junto do fechamento das features 8.4-8.7.
 
 ## Licao para gerar fixtures paginados no futuro
 
