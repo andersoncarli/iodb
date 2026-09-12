@@ -51,11 +51,11 @@ amadureceu ao encostar no teste.
 
 ## Verificacao
 
-- `bun ../utest/utest.js src/adapters/sqlite.t.js --force` — ✔16 (era ✔1).
+- `utest src/adapters/sqlite.t.js --force` — ✔16 (era ✔1).
 - `bun plans/7-adapter-parity/7.1.probe.js` — `paridade: IGUAL`, `remove apagou b`,
   `upsert pegou size=42`, `passthrough INSERT cru: ok`, `flush no-op: ok`,
   `put sem table lanca: ok`.
-- `bun ../utest/utest.js src/db.io.t.js --force` — ✔16 · `src/db-factory.t.js` — ✔8.
+- `utest src/db.io.t.js --force` — ✔16 · `src/db-factory.t.js` — ✔8.
 - `sprint eval 7.1 --yes` — 4 passos, todos ✓ → 🟢.
 
 ## Fora de escopo, reportado

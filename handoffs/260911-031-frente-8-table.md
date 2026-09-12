@@ -26,7 +26,7 @@ identificou e reverteu do stage no fim da sessão.
    pequeno, o próximo commit da 8.4 (ou um `FIX` avulso) precisa incluir essa
    mudança; `plans/8-table/8.4.eval.js:29` já foi atualizado com o novo md5
    (`a32adc3199b302d5c321d65b49c09845`).
-3. **Leia `ISSUES/003`** antes de rodar `bun ../utest/utest.js . --force` cru — o
+3. **Leia `ISSUES/003`** antes de rodar `utest . --force` cru — o
    exit code bruto pode vir 1 mesmo com tudo verde, por um bug real no `utest`
    (agregado `grand` conta checks entre arquivos concorrentes). Os `eval.js` desta
    frente já filtram por `--json`/`state`/`fails`, não por exit code.

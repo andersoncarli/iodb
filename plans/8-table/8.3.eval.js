@@ -18,7 +18,7 @@ eval("bun plans/8-table/8.3.probe.js", (out) => {
 })
 
 // 3. A suite do projeto inteira passa.
-eval("bun ../utest/utest.js . --force", (out, r) => {
+eval("utest . --force", (out, r) => {
   check(r.exitCode, 0)
   check(!out.includes('✘'))
 })

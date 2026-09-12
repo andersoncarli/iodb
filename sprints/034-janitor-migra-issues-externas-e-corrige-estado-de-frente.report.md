@@ -30,7 +30,7 @@ como estao — ambos pedem investigacao/decisao propria, fora do escopo deste sp
 
 ## Evidencia
 
-- `bun ../utest/utest.js . --force` — suite inteira verde antes e depois da mudanca (2703
+- `utest . --force` — suite inteira verde antes e depois da mudanca (2703
   checks).
 - `sprint docs` — de `✗ plans/8-table/_front.md: todas as features confirmadas mas
   state: active (esperado confirmed)` para `docs:check — ok`.

@@ -81,7 +81,7 @@ independente e mede a manchete diretamente.
 
 ## Testes
 
-`bun ../utest/utest.js . --force`: **399 checks, 19 arquivos, 97 testes, zero falhas** —
+`utest . --force`: **399 checks, 19 arquivos, 97 testes, zero falhas** —
 identico ao estado anterior. `sprint docs`: ok. `sprint eval 4.2`: 16 passos ✓.
 `sprint eval 4.3`: 12 passos ✓. `sprint eval 4.1`: 9 de 10, com o vermelho pre-existente
 descrito acima.

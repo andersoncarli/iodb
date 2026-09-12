@@ -42,7 +42,7 @@ a suite antes e depois tem que ser a mesma, check por check.
 
 ## Criterio de pronto
 
-- `bun ../utest/utest.js . --force` verde e identico ao de antes;
+- `utest . --force` verde e identico ao de antes;
 - `sprint docs` devolve `ok`;
 - `sprint eval 4.2` e `sprint eval 4.3` passam inteiros;
 - nenhum conserto de comportamento entrou junto (a regra da frente 5).

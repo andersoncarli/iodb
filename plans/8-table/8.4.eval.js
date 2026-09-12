@@ -34,7 +34,7 @@ eval("test -f src/fixtures/tabular-pre-8.2.csv && md5sum src/fixtures/tabular-pr
 //    page-cursor.t.js e tabular-table.t.js concorrentes e derruba o exit code
 //    mesmo com todo state=passed e fails=[] -- entao o criterio real e o
 //    JSON por-arquivo, nao `check(r.exitCode, 0)`.
-eval("bun ../utest/utest.js . --force --json", (out) => {
+eval("utest . --force --json", (out) => {
   const rows = JSON.parse(out.trim())
   const bad = rows.filter(r => r.state !== 'passed' || (r.fails && r.fails.length > 0))
   check(bad.length, 0)

@@ -6,7 +6,7 @@
 
 // 1. A suite inteira, verde. As 7 falhas de verify().valid herdadas do 008 sao
 //    desta feature, nao do lock.
-eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
+eval("utest .", (out, r) => check(r.exitCode, 0))
 
 // 2. O alocador existe como modulo PROPRIO — nao enterrado no io-engine. Uma
 //    responsabilidade so: quais prefixos binarios ja foram usados, por nivel.

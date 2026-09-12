@@ -53,13 +53,13 @@ eval("grep -c 'flushProjection()' src/io-engine.js", (out) => check(Number(out.t
 
 // 5. SUITE VERDE, com contagem exata. Os dois alvos em comandos SEPARADOS:
 //    `utest a b` roda so o primeiro e descarta o segundo em silencio.
-eval("bun ../utest/utest.js src --force", (out) => {
+eval("utest src --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 406)
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
 })
-eval("bun ../utest/utest.js pagedtext --force", (out) => {
+eval("utest pagedtext --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 72)
   check(!clean.includes("✘"))

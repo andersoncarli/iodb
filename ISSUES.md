@@ -2,9 +2,11 @@
 
 <!-- system file -->
 
-Registro quick-and-dirty de problemas a resolver depois — nos sistemas de trabalho
-(`sprint`/sprint-cli, `utest`, `quickrs`) e no proprio `iodb`. Uma linha por item. O
-detalhe forense, quando existe, mora em [`ISSUES/`](ISSUES/).
+Registro quick-and-dirty de problemas a resolver depois no proprio `iodb`. Uma linha por
+item. O detalhe forense, quando existe, mora em [`ISSUES/`](ISSUES/).
+
+Defeito de ferramenta vizinha (`sprint`/sprint-cli, `utest`, `quickrs`) mora no `ISSUES.md`
+dela, nao aqui — mesmo quando achado durante uma sessao do `iodb`.
 
 Colunas: **TODO** (visto, nao comecado) · **DOING** (em conserto) · **BLOCKED** (esperando
 decisao ou outra coisa) · **DONE** (resolvido — some daqui no proximo pente).
@@ -15,20 +17,6 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
 
 ## TODO
 
-- [utest] dois caminhos posicionais: so o primeiro roda, em silencio — `UTEST-ISSUE.md`
-- [sprint] politica: `ISSUES.md` como registro de QA/kanban deveria ser parte do metodo
-  (proposto nesta thread; nao implementado)
-- [sprint] `sprint close` grava `.git/SPRINT_COMMIT_MSG` do sprint ANTERIOR: a saida imprime o
-  titulo certo e o arquivo tem outro — quem segue o `git commit -F` que o tool sugere
-  commita com o titulo errado — [usecases/15-IODB-2.md](../sprint-cli/docs/usecases/15-IODB-2.md)
-- [sprint] `sprint close` bumpa versao no `package.json` mesmo num sprint que so mexeu em
-  `plans/`+`sprints/` — derivar do que foi encenado, ou `--no-bump` visivel
-- [sprint] `sprint feature new` semeia `verify_tests: [utest .]`, que nao e comando valido em
-  lugar nenhum — semear do campo `test` do `.sprint/config.json`
-- [sprint] `.sprint/config.json` tem `bun utest/utest.js .` sem o `../` — `sprint test` nunca
-  roda neste projeto; reportado em `usecases/14-IODB.md` e ainda aberto
-- [sprint] `sprint doctor` nao verifica que o comando de `test` resolve — um `test` quebrado e
-  indistinguivel de um `test` nunca rodado (reforca o item acima)
 - [iodb] `renderPage()` do pagedtext repete uma unidade pequena de enchimento (` ,\n`) em
   vez de um unico campo largo — proposta do usuario, FORA do escopo de qualquer sprint
   aberto (mexe em nucleo compartilhado por 6 features ja 🔵); precisa de sprint proprio na
@@ -46,6 +34,12 @@ _(vazio)_
 
 ## DONE
 
+- [iodb] ~60 arquivos em `plans/` (`.eval.js` e `.md` de feature) chamavam
+  `bun ../utest/utest.js`/`bun utest/utest.js` em vez do comando instalado — substituidos
+  por `utest` (no PATH via `bun link`) em todos os arquivos, junto de `.sprint/config.json`
+  e `verify_tests` das features novas. `utest` e `sprint` sao o verbo universal de teste/
+  workflow em todos os projetos irmaos (`iodb`, `sprint-cli`, `utest`), nao mais um caminho
+  relativo fragil a CWD.
 - [iodb] `flushPages()` re-renderizava a projecao INTEIRA a cada flush (decodificava toda
   pagina + ordenava + re-encodava toda chave), so para achar onde UMA chave dirty entra numa
   lista ordenada — 86ms para acrescentar 1 entry a um store de 400. Resolvido na feature 1.6

@@ -38,7 +38,7 @@ eval("grep -n \"from './io-hash'\" nutshell/io-nutshell.js", (out) => {
 // 5. A suite do nutshell passa inteira pelo runner do projeto. `test`, `check`
 //    e `withTempDir` sao globais injetados pelo utest — rodar com `bun` direto
 //    da ReferenceError, e isso NAO e defeito do codigo.
-eval("bun ../utest/utest.js nutshell/ --force", (out, r) => {
+eval("utest nutshell/ --force", (out, r) => {
   check(r.exitCode, 0)
   check(out.includes("io-nutshell.t.js"))
 })

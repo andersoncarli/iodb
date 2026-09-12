@@ -98,7 +98,7 @@ eval("grep -c '_projCopy()' src/io-engine.js", (out) => check(Number(out.trim())
 //    uma escrita por registro era O(n^2). O comentario que o admitia era a
 //    confissao do defeito no proprio codigo de teste.
 eval("grep -c 'flush: 0' src/io-engine.paged.t.js", (out) => check(out.trim(), "0"))
-eval("bun ../utest/utest.js src/io-engine.paged.t.js --force", (out) => {
+eval("utest src/io-engine.paged.t.js --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
@@ -107,7 +107,7 @@ eval("bun ../utest/utest.js src/io-engine.paged.t.js --force", (out) => {
 // 9. O TETO DE RAM, que e a manchete da 2.5 e que o pagedtext nao tinha: o
 //    cache era um Map sem eviccao, entao qualquer varredura materializava o
 //    arquivo inteiro. Os dois testes novos cobrem o teto e a versao desconhecida.
-eval("bun ../utest/utest.js pagedtext/pagedtext.t.js --force", (out) => {
+eval("utest pagedtext/pagedtext.t.js --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(/✔\s*54/.test(clean))
   check(!clean.includes("✘"))
@@ -116,7 +116,7 @@ eval("bun ../utest/utest.js pagedtext/pagedtext.t.js --force", (out) => {
 // 10. SUITE VERDE — 399 de antes mais os 9 novos. Convergir duas
 //    implementacoes numa so nao pode custar comportamento.
 //    Bench e suite nunca no mesmo eval (medido na 4.2): disputam CPU.
-eval("bun ../utest/utest.js . --force", (out) => {
+eval("utest . --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(/✔\s*408/.test(clean))
   check(!clean.includes("✘"))

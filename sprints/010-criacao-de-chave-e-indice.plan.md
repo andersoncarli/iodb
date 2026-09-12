@@ -82,4 +82,4 @@ revertendo so o contador — mesmos 64 testes, mesmos 16 arquivos.
 
 ## Criterio de pronto
 
-O declarado na feature. Verify: `bun ../utest/utest.js .`
+O declarado na feature. Verify: `utest .`

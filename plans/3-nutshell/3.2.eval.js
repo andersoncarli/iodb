@@ -17,7 +17,7 @@ eval("grep -c '^test(' nutshell/io-nutshell.concurrency.test.js", (out) => check
 
 // 4. A suite do nutshell roda verde. Os 21 checks da 3.1 seguem intactos e os
 //    8 novos sao desta feature.
-eval("bun ../utest/utest.js nutshell/", (out) => {
+eval("utest nutshell/", (out) => {
   const clean = out.replace(/\[[0-9;]*m/g, "")
   check(clean.includes("io-nutshell.concurrency.test.js"))
   check(/io-nutshell\.concurrency\.test\.js\s*✔8/.test(clean))

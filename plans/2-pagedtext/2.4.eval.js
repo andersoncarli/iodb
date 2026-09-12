@@ -41,13 +41,13 @@ eval("grep -c 'INDEX_METHODS\\|assertIndexShape' src/index-contract.js", (out) =
 
 // 4. SUITE VERDE, com contagem exata. Os dois alvos rodam em comandos
 //    SEPARADOS (UTEST-ISSUE.md: `utest a b` descarta o segundo em silencio).
-eval("bun ../utest/utest.js src --force", (out) => {
+eval("utest src --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 451)
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
 })
-eval("bun ../utest/utest.js pagedtext --force", (out) => {
+eval("utest pagedtext --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 71)
   check(!clean.includes("✘"))

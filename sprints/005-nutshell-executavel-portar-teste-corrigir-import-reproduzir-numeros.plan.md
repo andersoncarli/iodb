@@ -25,7 +25,7 @@ conflito fica **explicitamente fora** deste sprint.
 
 1. `nutshell/io-nutshell.t.js` — o teste nao rodava com `bun` direto porque `test`,
    `check` e `withTempDir` sao globais injetados pelo runner `utest`, nao imports.
-   Rodar pelo runner do projeto (`bun ../utest/utest.js nutshell/`) expos UMA falha
+   Rodar pelo runner do projeto (`utest nutshell/`) expos UMA falha
    real: o teste esperava `buf.dash`, residuo da nomenclatura do `io-engine.js`,
    quando o nutshell escreve `.jsonl`. Corrigir a extensao.
 2. `nutshell/smoke-io.js:7` — importava `fromB64` de `./io-nutshell.js`, que nao o
@@ -36,7 +36,7 @@ conflito fica **explicitamente fora** deste sprint.
 
 ## Criterio de pronto
 
-- `bun ../utest/utest.js nutshell/` verde, sem falha.
+- `utest nutshell/` verde, sem falha.
 - `bun nutshell/smoke-io.js` completa com cadeia valida.
 - `bun nutshell/demo-io.js` completa as 5 secoes.
 - Numeros observados registrados no report, comparados com os da doc.

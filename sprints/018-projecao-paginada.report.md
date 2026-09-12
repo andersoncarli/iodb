@@ -54,7 +54,7 @@ Suite verde: 325 checks, 75 testes em `src` (era 310/73); 71 em `pagedtext`.
 
 ## Fora de escopo, reportado
 
-- `bun ../utest/utest.js src pagedtext` executa so o primeiro caminho e descarta o segundo
+- `utest src pagedtext` executa so o primeiro caminho e descarta o segundo
   em silencio. Registrado em `UTEST-ISSUE.md`; por isso o eval desta feature usa dois
   comandos com contagem exata.
 - Um timeout apareceu no `io-engine.paged.t.js` durante a suite cheia. Investigado: o

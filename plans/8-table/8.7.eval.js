@@ -22,7 +22,7 @@ eval("bun plans/8-table/8.7.probe.js", (out) => {
 })
 
 // 3. A suite do projeto, julgada por STATE/FAILS (ISSUES/003).
-eval("bun ../utest/utest.js . --force --json", (out) => {
+eval("utest . --force --json", (out) => {
   const rows = JSON.parse(out.trim())
   const bad = rows.filter(r => r.state !== 'passed' || (r.fails && r.fails.length > 0))
   check(bad.length, 0)

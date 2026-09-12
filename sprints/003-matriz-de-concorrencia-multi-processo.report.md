@@ -50,7 +50,7 @@ Nenhuma mudança em `io-engine.js` — este sprint é caracterização, não cor
 
 ## Evidência
 
-- `bun ../utest/utest.js io-engine.matrix.test.js` — 6 células verdes (32 checks).
+- `utest io-engine.matrix.test.js` — 6 células verdes (32 checks).
 - Caracterização out-of-band do `no-seed`: 1/60 trials perdeu (180/240, 1 ENOENT);
   0/60 nas demais. Pré-fix 1.2 era ~9/10.
 - Suite completa: 📄14 🧪50 ✔232, sem regressão (002: 📄13 🧪44 ✔200).

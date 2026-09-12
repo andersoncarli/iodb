@@ -1,5 +1,7 @@
 # 033 — Plano: flush-o-dirty-nao-o-store
 
+Plano do sprint 033 (feature 1.6).
+
 ## Objetivo
 
 `flushPages()` (keyed) reconstruia a lista ordenada de chaves inteira a cada
@@ -30,7 +32,7 @@ de posicao — nao precisam ser relidas nem re-escritas.
 
 ## Criterio de pronto
 
-- Suite completa do iodb (`bun ../utest/utest.js .`) verde, sem regressao —
+- Suite completa do iodb (`utest .`) verde, sem regressao —
   em particular `paged-projection.t.js` (inclui tombstone/delete, que e o caso
   onde o corte por PAGINA (nao por chave individual) podia incluir uma chave
   deletada no prefixo copiado cru).

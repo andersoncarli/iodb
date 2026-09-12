@@ -75,12 +75,12 @@ vez de apagar a chave), os `all()` divergiriam e a feature nao estaria pronta.
 7. `src/adapters/sqlite.t.js`: subir de 1 check para cobrir put/upsert/remove/all/flush; e
    **o teste de paridade** — importar `IO, { merge }` de `../io-engine.js`, rodar a mesma
    sequencia nos dois, `check` que `all()` bate (ordenar por id antes de comparar).
-8. Conferir `bun ../utest/utest.js src --force` verde inteiro — `db.io.t.js` e o `.sql()`
+8. Conferir `utest src --force` verde inteiro — `db.io.t.js` e o `.sql()`
    do `db-factory.js` incluidos.
 
 ## Criterio de pronto
 
-`bun ../utest/utest.js src/adapters/sqlite.t.js --force` verde com o teste de paridade
-passando (incluindo o efeito do `remove`); `bun ../utest/utest.js src --force` sem
+`utest src/adapters/sqlite.t.js --force` verde com o teste de paridade
+passando (incluindo o efeito do `remove`); `utest src --force` sem
 regressao; `in({ tabela: linha })` de INSERT cru ainda funcionando para quem nao passa
 `{ table }`; e o diff mostrando que nada do passthrough existente foi removido.

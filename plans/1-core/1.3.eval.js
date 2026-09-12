@@ -3,13 +3,13 @@
 
 // 1. A matriz roda inteira e passa (6 células: seed=true × format × reduce,
 //    no-seed characterisation, close=0).
-eval("bun ../utest/utest.js io-engine.matrix.test.js", (out, r) => {
+eval("utest io-engine.matrix.test.js", (out, r) => {
   check(r.exitCode, 0)
   check(!out.includes("ENOENT"))
 })
 
 // 2. Suite completa continua verde — a matriz não regride nada.
-eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
+eval("utest .", (out, r) => check(r.exitCode, 0))
 
 // 3. O arquivo cobre os quatro eixos — cada nome de eixo aparece na assinatura
 //    de runCell e nos loops/células.

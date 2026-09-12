@@ -86,7 +86,7 @@ lookup-por-path; `corpus em disco`, `lookup por chave` e as buscas ficam.
 
 ## Verificacao
 
-- `bun ../utest/utest.js fswatch/fswatch.t.js --force` — ✔14 (a suite do fswatch, intacta).
+- `utest fswatch/fswatch.t.js --force` — ✔14 (a suite do fswatch, intacta).
 - `sprint eval 6.3 --yes` — 1 passo, ✓ → 🟢. O `6.3.eval.js` afirma so sobre a estrutura da
   saida (os quatro repos rodaram, o scan e destacado, as duas colunas tem numero em cada
   fase), nunca sobre um tempo — um teto reintroduziria a moldura de benchmark que foi

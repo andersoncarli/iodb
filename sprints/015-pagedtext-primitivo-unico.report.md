@@ -166,6 +166,6 @@ de um fator generoso.
 
 ## Testes
 
-`bun ../utest/utest.js . --force`: **408 checks, 19 arquivos, 100 testes, zero falhas** —
+`utest . --force`: **408 checks, 19 arquivos, 100 testes, zero falhas** —
 os 399 de antes mais 9 novos (teto de cache, versao desconhecida, rodape de checkpoint e
 o round-trip de cada um). `sprint eval 2.0 --yes`: **18 passos ✓**.

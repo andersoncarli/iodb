@@ -156,7 +156,7 @@ como arquivo de ambas (substrato, decisao do usuario).
 4. **Teste na suite.** `pagedtext/test.js` esta **fora** da suite hoje (o `utest`
    casa `.test.js`/`.t.js`; baseline: 16 arquivos, 308 assercoes). Renomear para
    a convencao para que a regressao seja pega.
-   - verify: `bun ../utest/utest.js .` conta o arquivo novo.
+   - verify: `utest .` conta o arquivo novo.
 
 5. **Ligar no `io-engine`.** `projection` deixa de ser closure viva; `get()`
    carrega so a pagina da chave. `.yaml` legivel passa a ser derivado sob demanda.

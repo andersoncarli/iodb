@@ -6,7 +6,7 @@
 
 // 1. A suite inteira, verde — inclui o caso de tombstone (delete) que expos o
 //    defeito do corte por CHAVE em vez de por PAGINA durante a implementacao.
-eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
+eval("utest .", (out, r) => check(r.exitCode, 0))
 
 // 2. keyIndex existe e e usado no branch keyed do flush.
 eval("grep -c 'let keyIndex' src/paged-projection.js", (out) => check(out.trim(), "1"))

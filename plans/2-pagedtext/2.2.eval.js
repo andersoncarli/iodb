@@ -48,13 +48,13 @@ eval("bun plans/2-pagedtext/2.2.probe.js", (out) => {
 //    SEPARADOS: `utest a b` roda so o primeiro e descarta o segundo em
 //    silencio (registrado em UTEST-ISSUE.md), entao um eval que os juntasse
 //    daria verde sobre codigo nunca executado.
-eval("bun ../utest/utest.js src --force", (out) => {
+eval("utest src --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 395)
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
 })
-eval("bun ../utest/utest.js pagedtext --force", (out) => {
+eval("utest pagedtext --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(Number([...clean.matchAll(/✔\s*(\d+)/g)].pop()[1]) >= 71)
   check(!clean.includes("✘"))

@@ -45,21 +45,21 @@ eval("bun plans/7-adapter-parity/7.1.probe.js", (out) => {
 //    A suite `src` inteira NAO entra: ela hoje carrega WIP nao versionado da
 //    feature 2.2 (`src/tabular-projection.t.js`) que falha por conta propria —
 //    fora do escopo desta feature, reportado no report do sprint 019.
-eval("bun ../utest/utest.js src/adapters/sqlite.t.js --force", (out) => {
+eval("utest src/adapters/sqlite.t.js --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
   check(Number([...clean.matchAll(/✔(\d+)/g)].pop()[1]) >= 16)
 })
 
-eval("bun ../utest/utest.js src/db.io.t.js --force", (out) => {
+eval("utest src/db.io.t.js --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
   check(Number([...clean.matchAll(/✔(\d+)/g)].pop()[1]) >= 16)
 })
 
-eval("bun ../utest/utest.js src/db-factory.t.js --force", (out) => {
+eval("utest src/db-factory.t.js --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))

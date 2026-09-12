@@ -32,7 +32,7 @@ Cada célula: 8 processos `bun` reais × 30 writes no mesmo `IO()`. Reporta
      `lossy <= TRIALS/4` (guarda contra reabrir o bug ~90% de 1.2; tolera o residual).
    - 1 célula `close=0` — documenta que `in()` faz flush imediato por default (240/240
      mesmo sem `close()`).
-   verify: `bun ../utest/utest.js io-engine.matrix.test.js`.
+   verify: `utest io-engine.matrix.test.js`.
 
 ## Achados (registro — este sprint NÃO corrige)
 
@@ -48,6 +48,6 @@ Cada célula: 8 processos `bun` reais × 30 writes no mesmo `IO()`. Reporta
 
 ## Critério de pronto
 
-- `bun ../utest/utest.js io-engine.matrix.test.js` verde.
+- `utest io-engine.matrix.test.js` verde.
 - Suite completa sem regressão.
 - Achados acima registrados no report e nos requisitos de 1.3.

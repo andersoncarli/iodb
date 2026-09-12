@@ -15,7 +15,7 @@ Duas ocorrencias na mesma sessao:
    (`c21101f`) nao continha o arquivo (`git show HEAD:src/fixtures/...` ->
    "fatal: path exists on disk, but not in HEAD" -- o arquivo existia no disco mas
    nunca chegou ao commit). Corrigido com um commit avulso, `d0d3f9c`.
-2. **Durante uma rodada de `bun ../utest/utest.js . --force`**: um teste (`schema.t.js`,
+2. **Durante uma rodada de `utest . --force`**: um teste (`schema.t.js`,
    que le o fixture) falhou com `ENOENT: no such file or directory,
    open '.../tabular-pre-8.2.csv'`. Rodando a MESMA suite de novo, sem tocar em nada,
    o arquivo estava de volta e o teste passou.

@@ -43,7 +43,7 @@ eval("grep -c '3.2 —' nutshell/io-nutshell.concurrency.test.js", (out) => chec
 //    inalterado" separado — o proprio teste "3.2 — 8 concurrent writers" e a
 //    guarda dessa regressao; re-spawnar 8 processos pra afirmar o identico so
 //    seria hog.
-eval("bun ../utest/utest.js nutshell/io-nutshell.concurrency.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
+eval("utest nutshell/io-nutshell.concurrency.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
   check(!out.includes("💥"))
   check(/\b13\b/.test(out))
 })
@@ -51,7 +51,7 @@ eval("grep -c '3.3 —.*lock: true' nutshell/io-nutshell.concurrency.test.js", (
 
 // 8. AO VIVO — o caso do criterio textual (8 workers, lock ligado: 240/240,
 //    zero crash, zero timeout) roda sem 💥.
-eval("bun ../utest/utest.js nutshell/io-nutshell.concurrency.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'",
+eval("utest nutshell/io-nutshell.concurrency.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'",
   (out) => check(!out.includes("💥")))
 
 // ── COMPARACAO ENTRE ENGINES ───────────────────────────────────────────────
@@ -96,7 +96,7 @@ eval("grep -c 'open/close are optional no-ops' nutshell/io-nutshell.t.js", (out)
 eval("grep -c 'open(payload) seeds record #0' nutshell/io-nutshell.t.js", (out) => check(out.trim(), "1"))
 eval("grep -c 'header / state / find match' nutshell/io-nutshell.t.js", (out) => check(out.trim(), "1"))
 // ...e a suite roda verde AO VIVO (32 checks, sem 💥).
-eval("bun ../utest/utest.js nutshell/io-nutshell.t.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
+eval("utest nutshell/io-nutshell.t.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
   check(!out.includes("💥"))
   check(/\b32\b/.test(out))
 })
@@ -118,11 +118,11 @@ eval("git diff HEAD -- src/io-engine.js | grep -E '^\\+' | grep -c 'lockWaitNs\\
 
 // 17. Regressao: io-engine e db-factory seguem verdes (as 6 falhas de
 //     io-engine.matrix.test.js sao pre-existentes — defeito 1.5, ainda aberto).
-eval("bun ../utest/utest.js src/io-engine.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
+eval("utest src/io-engine.test.js --force 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", (out) => {
   check(!out.includes("💥"))
   check(/\b55\b/.test(out))     // 55 checks, all green
 })
-eval("bun ../utest/utest.js src/db-factory.t.js --force", (out) => {
+eval("utest src/db-factory.t.js --force", (out) => {
   const clean = out.replace(/\[[0-9;]*m/g, "")
   check(!/💥/.test(clean))
 })

@@ -13,7 +13,7 @@ resposta como teste que roda, nao como paragrafo num relatorio.
 1. **`nutshell/io-nutshell.concurrency.test.js`** (novo) — porta do harness de
    `io-engine.concurrency.test.js` (1.2) para o nutshell: `Bun.spawn` de 8 processos
    x 30 escritas na mesma base, mais o controle de 1 processo.
-   Verify: `bun ../utest/utest.js nutshell/io-nutshell.concurrency.test.js`.
+   Verify: `utest nutshell/io-nutshell.concurrency.test.js`.
 
 2. **`nutshell/io-nutshell.md`** — UMA frase no bloco "What's Not Here" com a
    consequencia medida do "No locks". A doc e o mecanismo, nao o relatorio.

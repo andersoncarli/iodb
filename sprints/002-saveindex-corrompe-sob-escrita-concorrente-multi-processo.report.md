@@ -34,7 +34,7 @@ silenciosa de registros que `verify()` não denuncia.
 
 ## Evidência
 
-- `bun ../utest/utest.js io-engine.concurrency.test.js` — antes: `ENOENT` + 114–211/240
+- `utest io-engine.concurrency.test.js` — antes: `ENOENT` + 114–211/240
   registros em execuções sucessivas. Depois: 10/10 limpo, `verify().valid`, 240/240.
 - Suite completa: 📄13 🧪44 ✔200, sem regressão (boot: 📄12 🧪43 ✔182; +1 arquivo/teste).
 

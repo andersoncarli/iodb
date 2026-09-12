@@ -75,7 +75,7 @@ eval("grep -ci plana bench/resultado-4.2.txt", (out) => check(Number(out.trim())
 //    Um eval que cria a propria contencao mede o escalonador, nao a feature.
 //
 //    Aqui roda so o arquivo que o corte da 4.2 poderia ter quebrado, isolado.
-eval("bun ../utest/utest.js src/io-engine.test.js --force", (out) => {
+eval("utest src/io-engine.test.js --force", (out) => {
   // Limpa ANSI incluindo o ESC solto: o utest emite "\x1b✔\x1b 55", entao um
   // regex que so cobre "[0-9;]*m" deixa o ESC entre o simbolo e o numero.
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")

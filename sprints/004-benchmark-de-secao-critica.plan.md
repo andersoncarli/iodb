@@ -53,8 +53,8 @@ Foi assim que "4 -> 10 falhas" virou argumento contra o `Atomics.wait` no coment
 ## Verify
 
 ```
-bun ../utest/utest.js io-engine.bench.js --force
-bun ../utest/utest.js . --force
+utest io-engine.bench.js --force
+utest . --force
 ```
 
 Nota: `.sprint/config.json:10` traz `bun utest/utest.js .` (sem `../`), caminho que nao

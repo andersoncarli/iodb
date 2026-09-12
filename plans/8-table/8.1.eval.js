@@ -26,7 +26,7 @@ eval("bun plans/8-table/8.1.probe.js", (out) => {
 
 // 4. A suite do projeto inteira passa — a feature nao quebrou nada fora do
 //    escopo dela, e os proprios testes do modulo table estao nela.
-eval("bun ../utest/utest.js . --force", (out, r) => {
+eval("utest . --force", (out, r) => {
   check(r.exitCode, 0)
   check(!out.includes('✘'))
 })

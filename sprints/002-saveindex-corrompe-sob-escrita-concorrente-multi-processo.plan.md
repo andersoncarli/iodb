@@ -12,7 +12,7 @@ como achado de homologação em `plans/1-core/1.2-*.md` (originado de `~/utest` 
 1. **`io-engine.concurrency.test.js`** — novo. Reprodutor: 8 processos `bun` reais
    (`Bun.spawn`) × 30 writes cada no mesmo `IO()` base, genesis semeado. Assertivas:
    nenhum exit ≠ 0, nenhum `ENOENT` no stderr, `verify().valid`, 240/240 registros.
-   verify: `bun ../utest/utest.js io-engine.concurrency.test.js`.
+   verify: `utest io-engine.concurrency.test.js`.
 
 2. **`io-engine.js` `saveIndex()`** — trocar `const tmp = f.index + '.tmp'` por
    `const tmp = \`${f.index}.${process.pid}.tmp\``. Temp privado por processo + rename
@@ -27,8 +27,8 @@ como achado de homologação em `plans/1-core/1.2-*.md` (originado de `~/utest` 
 
 ## Critério de pronto
 
-- `bun ../utest/utest.js io-engine.concurrency.test.js` verde 10/10.
-- Suite completa (`bun ../utest/utest.js .`) sem regressão.
+- `utest io-engine.concurrency.test.js` verde 10/10.
+- Suite completa (`utest .`) sem regressão.
 
 ## Fora de escopo
 

@@ -30,7 +30,7 @@ substituir a ordem-por-nome-de-arquivo por um carregamento explicito via
 5. Verificar `command-engine.js` — tem `loadAdapters()` proprio, mas e outro
    conceito (skills), nao adapters de storage; confirmar que nao precisa
    mudar.
-6. `bun ../utest/utest.js .` — conferir que nao ha regressao nova (as 7
+6. `utest .` — conferir que nao ha regressao nova (as 7
    falhas de `io-engine.matrix.test.js`/`.concurrency.test.js` sao
    pre-existentes, do 1.4, fora de escopo).
 7. `sprint update 5.1` para trocar os nomes antigos com prefixo na lista

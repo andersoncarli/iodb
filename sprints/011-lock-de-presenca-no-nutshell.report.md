@@ -121,5 +121,5 @@ seguida rumo ao v0.1.
 
   sprint test 3.3                         → 13 + 32 ✓
   sprint eval 3.3 --yes                   → 33 passos ✓  (🟢)
-  bun ../utest/utest.js src/io-engine.test.js --force   → 55 ✓  (sem regressao)
+  utest src/io-engine.test.js --force   → 55 ✓  (sem regressao)
   bun src/io-engine.bench.js              → roda; marcas ms intactas

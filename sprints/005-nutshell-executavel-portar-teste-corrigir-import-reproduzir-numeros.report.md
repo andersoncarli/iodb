@@ -27,7 +27,7 @@ mede seus numeros aqui — confirmando dois e refutando um.
    `fromB64`), importados de `io-hash.js` e nunca usados. Removidos; so as quatro
    primitivas vivas ficam (`toBits`, `makeFullKey`, `shortestPrefix`, `verify`).
 
-**Resultado:** `bun ../utest/utest.js nutshell/` → 21/21 verde. Smoke e demo
+**Resultado:** `utest nutshell/` → 21/21 verde. Smoke e demo
 completam.
 
 ## Os numeros — dois confirmados, um refutado

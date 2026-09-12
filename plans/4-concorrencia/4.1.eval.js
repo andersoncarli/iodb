@@ -8,7 +8,7 @@ eval("grep -n 'bench.js' TEST.yaml", (out) => check(out.includes("*.bench.js")))
 
 // 2. O bench roda e emite a tabela p50/p95/p99 por fase — sanity test via
 //    utest, cobre instrumentação inerte (com/sem `bench` dá a mesma projeção).
-eval("bun ../utest/utest.js src/io-engine.bench.js --force", (out, r) => {
+eval("utest src/io-engine.bench.js --force", (out, r) => {
   check(r.exitCode, 0)
   check(out.includes("phase marks sum to"))
 })
@@ -41,6 +41,6 @@ eval("grep -A10 'store=100000 procs=1 ' bench/baseline-4.1.txt | grep critical",
 // regressão desta feature (que não toca in genesis election). O bench de
 // 4.1 não deve reprovar por causa de um teste alheio conhecidamente flaky;
 // roda de novo e falha só se o padrão persistir nas outras 19 checagens.
-eval("bun ../utest/utest.js io-engine.test.js io-engine.concurrency.test.js src/io-engine.bench.js --force", (out, r) =>
+eval("utest io-engine.test.js io-engine.concurrency.test.js src/io-engine.bench.js --force", (out, r) =>
   check(r.exitCode, 0)
 )

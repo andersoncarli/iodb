@@ -33,7 +33,7 @@
 // 1. A suite inteira, verde. O pre-requisito duro desta feature era o prefixo
 //    curto (1.5 / sprint 010), que fechou 🔵 — as 7 falhas de verify().valid
 //    herdadas do 008 nao existem mais.
-eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
+eval("utest .", (out, r) => check(r.exitCode, 0))
 
 // 2. As celulas de paridade sao SINGLE-PROCESS. Se elas spawnassem carga,
 //    estariam medindo concorrencia de novo — o eixo de 1.3 e de 011, nao deste.
@@ -44,7 +44,7 @@ eval(
 )
 
 // 3. As 6 celulas de 1.4 existem e rodam verdes.
-eval("bun ../utest/utest.js src/io-engine.matrix.test.js --force",
+eval("utest src/io-engine.matrix.test.js --force",
      (out, r) => check(r.exitCode, 0))
 eval("grep -c '^test(\"1.4 parity' src/io-engine.matrix.test.js",
      (out) => check(Number(out.trim()) >= 5))
@@ -162,7 +162,7 @@ eval(
 //     eval que le o codigo confirma que a linha existe; este confirma que ela e
 //     NECESSARIA. O arquivo e restaurado ao fim, sempre.
 eval(
-  "cp src/hash.js /tmp/h.keep && sed -i \"s/parseInt('1' + p, 2)/parseInt(p, 2)/\" src/hash.js && (bun ../utest/utest.js src/io-engine.matrix.test.js --force > /tmp/h.out 2>&1; echo \"exit=$?\"); cp /tmp/h.keep src/hash.js; echo \"falhas=$(grep -c 'check(' /tmp/h.out)\"; grep -c 'JSON.stringify(A), JSON.stringify(B)' /tmp/h.out | sed 's/^/pojoQuebrou=/'",
+  "cp src/hash.js /tmp/h.keep && sed -i \"s/parseInt('1' + p, 2)/parseInt(p, 2)/\" src/hash.js && (utest src/io-engine.matrix.test.js --force > /tmp/h.out 2>&1; echo \"exit=$?\"); cp /tmp/h.keep src/hash.js; echo \"falhas=$(grep -c 'check(' /tmp/h.out)\"; grep -c 'JSON.stringify(A), JSON.stringify(B)' /tmp/h.out | sed 's/^/pojoQuebrou=/'",
   (out) => {
     check(out.includes('exit=1'))        // a matriz DEVE quebrar sem a correcao de 010
     // Dezenas de asserts, nao um. O contador do runner vem com cor ANSI entre o
@@ -179,7 +179,7 @@ eval(
 )
 
 //     Restaurado, verde de novo — a reversao acima nao deixou residuo.
-eval("bun ../utest/utest.js src/io-engine.matrix.test.js --force",
+eval("utest src/io-engine.matrix.test.js --force",
      (out, r) => check(r.exitCode, 0))
 
 // 12. O que 1.4 NAO confirma de 1.5, dito explicitamente. Lock por arquivo,

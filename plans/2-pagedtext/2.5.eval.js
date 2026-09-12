@@ -45,14 +45,14 @@ eval("bun plans/2-pagedtext/2.5.probe.js", (out) => {
 //    de passar por ausencia de "✘".
 //
 //    O bench nao entra aqui — disputam CPU, medido em 2.2.eval.js:69-75.
-eval("bun ../utest/utest.js src --force", (out) => {
+eval("utest src --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))
   check(Number([...clean.matchAll(/🧪(\d+)/g)].pop()[1]) >= 75)
 })
 
-eval("bun ../utest/utest.js pagedtext --force", (out) => {
+eval("utest pagedtext --force", (out) => {
   const clean = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b/g, "")
   check(!clean.includes("✘"))
   check(!clean.includes("💥"))

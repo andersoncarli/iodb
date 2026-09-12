@@ -6,5 +6,5 @@
     "plans": "plans",
     "sprints": "sprints"
   },
-  "test": "bun utest/utest.js ."
+  "test": "utest ."
 }

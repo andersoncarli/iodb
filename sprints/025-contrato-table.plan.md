@@ -37,4 +37,4 @@ mais a tabela de memória `memTable` como implementação de referência de nív
 - `capabilities(memTable(rows, schema))` devolve `{level: 0, has: {get:false, find:false, range:false, count:false, filter:false, group:false}}`.
 - Uma tabela deliberadamente quebrada faz `conform` lançar/reportar falha nas leis de
   reentrância e equivalência, não silenciosamente passar.
-- `bun ../utest/utest.js src/table` verde.
+- `utest src/table` verde.

@@ -35,4 +35,4 @@ de cadeia. Nao bloqueia este sprint.
 ## Criterio de pronto
 
 O declarado na feature. Verify:
-`bun ../utest/utest.js nutshell/io-nutshell.concurrency.test.js --force`
+`utest nutshell/io-nutshell.concurrency.test.js --force`

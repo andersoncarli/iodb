@@ -76,7 +76,7 @@ e a travessia para ali. Reduz o soml de 23135 para 8479 entries.
 
 ## Verificacao
 
-`bun ../utest/utest.js fswatch/fswatch.t.js --force` — 14 checks verdes. A suite migrou de
+`utest fswatch/fswatch.t.js --force` — 14 checks verdes. A suite migrou de
 `bun:test` para **utest**, que e o runner do projeto; o `scripts.test` do `package.json`
 apontava para `utest` e nao rodava, e agora roda.
 

@@ -65,7 +65,7 @@ inteiro. "add no inicio" (pior caso: nenhuma chave fica intacta) ainda cresce
 com N — nao e regressao, e o caso em que o corte genuinamente nao ajuda
 (chave nova menor que tudo o que ja existe desloca tudo).
 
-Suite completa (`bun ../utest/utest.js .`): 2703 checks verdes, mesma
+Suite completa (`utest .`): 2703 checks verdes, mesma
 baseline de antes — `paged-projection.t.js` e `fswatch.t.js` (14 checks)
 inclusos.
 

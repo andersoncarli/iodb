@@ -71,4 +71,4 @@ Concorrencia e o eixo de 011; 009 nao deve spawnar carga para afirmar formato.
 
 Vereditos identicos entre formatos e entre engines para o mesmo objeto, com
 `bad = 0` e sem limiar. Suite inteira verde. Verify:
-`bun ../utest/utest.js io-engine.matrix.test.js --force`
+`utest io-engine.matrix.test.js --force`

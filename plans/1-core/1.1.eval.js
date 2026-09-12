@@ -1,6 +1,6 @@
 // suite propria roda via utest peer (../utest), so os 12 arquivos de iodb —
 // utils/utest nao sao mais submodule aninhado, entao nao aparecem na varredura
-eval("bun ../utest/utest.js .", (out, r) => check(r.exitCode, 0))
+eval("utest .", (out, r) => check(r.exitCode, 0))
 
 // DB() resolve namespace e persiste um registro via kv()
 eval(
