@@ -28,7 +28,11 @@ function seedCsv(dir, name) {
 function seedDash(dir, name) {
   const io = IO(`${dir}/${name}`, { reduce: merge, initial: {} })
   io.open()
-  for (const r of rows) io.in({ [r.id]: { name: r.name, age: r.age } })
+  // Append bufferizado: flush por registro e O(n^2) (cada flush reescreve
+  // .index/.yaml inteiros — medido em io-engine.bench.js:66). Os testes afirmam
+  // o estado DEPOIS do seed, nao o flush-a-flush.
+  for (const r of rows) io.in({ [r.id]: { name: r.name, age: r.age } }, { flush: 0 })
+  io.flush()
 }
 
 test('catalog: db.users produz um no {op:source,name:users}, sem tocar o disco', ({ check, withTempDir }) => {

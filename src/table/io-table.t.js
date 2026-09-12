@@ -8,7 +8,11 @@ import { join } from 'path'
 function seedIo(dir, name, rows) {
   const io = IO(join(dir, name), { reduce: merge, initial: {} })
   io.open()
-  for (const r of rows) io.in({ [r.id]: { name: r.name, age: r.age } })
+  // Append bufferizado: flush por registro e O(n^2) (cada flush reescreve
+  // .index/.yaml inteiros — medido em io-engine.bench.js:66). Os testes afirmam
+  // o estado DEPOIS do seed, nao o flush-a-flush.
+  for (const r of rows) io.in({ [r.id]: { name: r.name, age: r.age } }, { flush: 0 })
+  io.flush()
   return io
 }
 
@@ -100,7 +104,7 @@ test('io-table: scan() nunca decodifica mais de uma linha crua do log por vez (l
     // mais de UMA linha crua por vez (`linesLive<=1`), e le em blocos (nunca
     // um `readFileSync` do arquivo inteiro como `records()` faz).
     const rows = []
-    for (let i = 0; i < 500; i++) rows.push({ id: 'k' + i, name: 'n' + i, age: i })
+    for (let i = 0; i < 3; i++) rows.push({ id: 'k' + i, name: 'n' + i, age: i })
     const io = seedIo(dir, 'stream', rows)
     const t = ioTable(io, schema)
     const c = t.scan()

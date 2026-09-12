@@ -41,6 +41,13 @@ Formato de linha: `- [sistema] frase curta — <ponteiro opcional>`
 - [iodb] `src/fixtures/tabular-pre-8.2.csv` foi gerado sem `pageSize` pequeno e virou 2633
   linhas de enchimento de pagina — regenerado (30 linhas), mas ainda STAGED, nao commitado
   — decisao pendente do usuario — [ISSUES/004](ISSUES/004-fixture-tabular-pre-8-2-tamanho.md)
+- [iodb] `flushPages()` re-renderiza a projecao INTEIRA a cada flush (ordena e re-encoda toda
+  chave); a ESCRITA ja e diffada por pagina, mas o re-render nao — com 400 entries no store,
+  acrescentar UM custa 86ms. E o teto que sobra depois das correcoes do fswatch abaixo, e o
+  que ainda impede o fswatch de ser a fonte de arvore padrao de um runner (indexar custa
+  ~2.5ms/entry contra 0.03ms de um `readdirSync`). O comentario do proprio
+  `replacePagesDiffed` assume o O(store) como "by nature" — mudar isso precisa de sprint
+  proprio na frente do engine — detalhe em `utest/ISSUES/002-iodb-flush-o-store.md`
 - [iodb] `renderPage()` do pagedtext repete uma unidade pequena de enchimento (` ,\n`) em
   vez de um unico campo largo — proposta do usuario, FORA do escopo de qualquer sprint
   aberto (mexe em nucleo compartilhado por 6 features ja 🔵); precisa de sprint proprio na
@@ -57,6 +64,20 @@ _(vazio)_
   [ISSUES/005](ISSUES/005-fixture-desaparece-intermitente.md)
 
 ## DONE
+
+- [fswatch] tres defeitos de performance/contrato corrigidos em 2026-09-11, com o `utest`
+  como primeiro cliente real (autorizado pelo usuario). Detalhe forense em
+  `utest/ISSUES/001`, `003` e `004`:
+  - `reconcile()` gravava sem buffer (`put` default `flush: true`), flushando o store inteiro
+    a cada arquivo — 300 arquivos de **4901ms para 241ms** (20x);
+  - `scan()` publico varria a arvore DUAS vezes (`scanner.scan()` e depois `snapshot()`),
+    porque so o `snapshot` preenchia `path` — a segunda travessia sumiu;
+  - `describe()` passou a preencher `path` (absoluto), entao entries lidos do store voltam a
+    servir o idiom que o proprio `docs/utest-sprint-prep.md` publica — antes vinham TODOS sem
+    `path`, e `relative(root, e.path)` devolvia `undefined` em silencio.
+
+  Efeito combinado: indexar 400 arquivos caiu de ~6500ms para **814ms**; a suite do `iodb`
+  caiu de 50s para 27s. 2703 checks verdes, os 14 do `fswatch.t.js` inclusos.
 
 - [iodb] guarda de replay do `.proj` usava literal `4096` em vez do `pageSize`, e duplicava
   a projecao ao reabrir com pagina menor — resolvido na feature 4.5 (sprint 022): o guarda

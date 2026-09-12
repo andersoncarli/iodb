@@ -2,7 +2,7 @@
 front: 8
 keyword: table
 title: table — a superficie minima de leitura sobre a qual uma algebra relacional se apoia
-state: confirmed
+state: active
 updated: 2026-09-11
 ---
 # [8] table — a superficie minima de leitura sobre a qual uma algebra relacional se apoia

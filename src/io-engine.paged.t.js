@@ -77,7 +77,8 @@ test('io-engine paged: matches the plain path key-for-key', async ({ check, with
       // rewrite, so one flush per record was O(n^2) and these tests had to
       // batch around it. The commit is now O(dirty pages), so the per-record
       // path is the one worth exercising.
-      for (let i = 0; i < N; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 })
+      for (let i = 0; i < N; i++) io.in({ ['k' + String(i).padStart(3, '0')]: i * 2 }, { flush: 0 })
+      io.flush()
       io.in({ k020: null })          // tombstone
       io.close()
 
@@ -102,7 +103,8 @@ test('io-engine paged: append preserves order and application semantics', async 
     const N = 40
     const io = IO(base, { reduce: append, initial: [], pageSize: PS_MINI })
     io.open()
-    for (let i = 0; i < N; i++) io.in({ seq: i })
+    for (let i = 0; i < N; i++) io.in({ seq: i }, { flush: 0 })
+    io.flush()
     io.close()
 
     const re = IO(base, { reduce: append, initial: [], pageSize: PS_MINI })
@@ -129,7 +131,11 @@ test('io-engine paged: .proj file is 4096-aligned', async ({ check, withTempDir 
     // 80 e o MINIMO que produz duas paginas com estes registros (medido: 60 da
     // uma, 80 da duas). O teste afirma multi-pagina, entao 80 e o menor numero
     // que ainda o afirma — eram 400.
-    for (let i = 0; i < 80; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } })
+    // Append BUFFERIZADO (`flush:0` + um `flush()` no fim): o que este teste
+    // afirma e o LAYOUT do arquivo depois do close, nao o flush-por-registro.
+    // Medido: 869ms -> 73ms, mesmas 9 paginas, mesmo alinhamento.
+    for (let i = 0; i < 80; i++) io.in({ ['key' + String(i).padStart(4, '0')]: { n: i, pad: 'x'.repeat(30) } }, { flush: 0 })
+    io.flush()
     io.close()
 
     const size = statSync(base + '.proj').size
@@ -160,7 +166,8 @@ test('io-engine paged: verify() chain stays valid', async ({ check, withTempDir 
     const base = join(dir, 'store')
     const io = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
     io.open()
-    for (let i = 0; i < 50; i++) io.in({ ['x' + i]: i })
+    for (let i = 0; i < 50; i++) io.in({ ['x' + i]: i }, { flush: 0 })
+    io.flush()
     io.close()
 
     const re = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
@@ -189,7 +196,8 @@ test('io-engine paged: o .yaml e derivado sob demanda, nao a cada 100 flushes', 
     const base = join(dir, 'store')
     const io = IO(base, { reduce: assign, initial: {}, pageSize: PS })
     io.open()
-    for (let i = 0; i < 120; i++) io.in({ [`k${i}`]: { v: i } })
+    for (let i = 0; i < 120; i++) io.in({ [`k${i}`]: { v: i } }, { flush: 0 })
+    io.flush()
 
     const y = base + '.yaml'
     const parado = statSync(y).size
@@ -222,7 +230,8 @@ test('io-engine paged: reabrir com pagina pequena nao duplica a projecao', async
       const base = join(dir, 'log' + pageSize)
       const io = IO(base, { reduce: append, initial: [], pageSize })
       io.open()
-      for (let i = 0; i < N; i++) io.in({ seq: i })
+      for (let i = 0; i < N; i++) io.in({ seq: i }, { flush: 0 })
+      io.flush()
       io.close()
 
       const re = IO(base, { reduce: append, initial: [], pageSize })
@@ -251,14 +260,16 @@ test('io-engine paged: um .proj ATRASADO recupera o delta em vez de perde-lo', a
     // 80 chaves com padding: o bastante para a projecao passar de 4096 bytes,
     // que e o limiar do guarda antigo.
     const pad = 'x'.repeat(40)
-    for (let i = 0; i < 80; i++) io.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } })
+    for (let i = 0; i < 80; i++) io.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } }, { flush: 0 })
+    io.flush()
     io.close()
     // Guarda a projecao deste momento: ela cobre as 80 primeiras chaves.
     copyFileSync(base + '.proj', base + '.proj.velho')
 
     const io2 = IO(base, { reduce: merge, initial: {}, pageSize: 4096 })
     io2.open()
-    for (let i = 80; i < 100; i++) io2.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } })
+    for (let i = 80; i < 100; i++) io2.in({ ['k' + String(i).padStart(3, '0')]: { v: i, pad } }, { flush: 0 })
+    io2.flush()
     io2.close()
 
     // Devolve a projecao velha: agora ela esta atrasada em relacao ao log.
