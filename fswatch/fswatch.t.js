@@ -96,3 +96,26 @@ test('fswatch: the sqlite backend answers the same interface', async ({ check, w
     }
   })
 })
+
+// bootstrap: 'typed' swaps the sequential Scanner for TypedScanner (readdir-only
+// topology, then bounded-concurrent stat()) — same dev:ino identity, same shape.
+test('fswatch: the typed bootstrap matches the default scan', async ({ check, withTempDir }) => {
+  await withTempDir(async dir => {
+    await mkdir(path.join(dir, 'src', 'nested'), { recursive: true })
+    await writeFile(path.join(dir, 'src', 'a.ts'), 'x')
+    await writeFile(path.join(dir, 'src', 'nested', 'b.ts'), 'y')
+
+    const legacy = await FSWatch(clusters(dir))
+    await legacy.scan()
+    const legacyEntries = real(legacy).map(e => ({ ...e, id: undefined, parent: undefined, dev: undefined, ino: undefined })).sort((a, b) => a.path.localeCompare(b.path))
+    legacy.close()
+
+    const typed = await FSWatch({ ...clusters(dir), bootstrap: 'typed' })
+    await typed.scan()
+    const typedEntries = real(typed).map(e => ({ ...e, id: undefined, parent: undefined, dev: undefined, ino: undefined })).sort((a, b) => a.path.localeCompare(b.path))
+    typed.close()
+
+    check(typedEntries.length, legacyEntries.length)
+    check(JSON.stringify(typedEntries), JSON.stringify(legacyEntries))
+  })
+})

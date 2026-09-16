@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { Database } from 'bun:sqlite'
 import IO, { merge } from '../src/io-engine.js'
+import { LazyTree } from './typed/lazytree.js'
 
 const HOME = os.homedir()
 const SEP = path.sep
@@ -252,6 +253,64 @@ const Scanner = (store, pruned = () => false) => {
   return { scan }
 }
 
+// The topology-first alternative: LazyTree walks with readdir() only (no lstat
+// in the recursion, see fswatch/typed/TYPED.md §19), so the tree shape is known
+// before any metadata is. Once the shape is known, stat() runs over every node
+// CONCURRENTLY (bounded) instead of one lstat per readdir the sequential Scanner
+// pays for. Entries still key on dev:ino, same as describe(), so the baseline
+// this produces is a drop-in replacement — MetadataStore/diff() do not change.
+const TypedScanner = (store, pruned = () => false, { concurrency = 64 } = {}) => {
+  const scan = async targets => {
+    const found = new Map()
+    for (const target of targets) {
+      const tree = LazyTree(target)
+      // Phase 1: topology only, via readdir() — LazyTree.children() never stats.
+      // lazyId (the tree's own sequential id) -> {node, parentLazyId} for every
+      // node, so metadata can be fetched out of order in phase 2 and still know
+      // its parent afterwards.
+      const nodes = new Map()
+      const walk = async (node, parentLazyId) => {
+        nodes.set(node.id, { node, parentLazyId })
+        if (node.type !== 'd' || pruned(node.path)) return
+        for (const child of await node.children()) await walk(child, node.id)
+      }
+      await walk(tree.root, null)
+
+      // Phase 2: stat() every node CONCURRENTLY (bounded) instead of the one
+      // lstat per readdir the sequential Scanner pays for.
+      const lazyToKey = new Map()
+      const entries = [...nodes.values()]
+      const statOne = async ({ node }) => {
+        const s = await node.stat()
+        const dir = s.isDirectory()
+        lazyToKey.set(node.id, key(s.dev, s.ino))
+        return {
+          lazyId: node.id, name: node.name, kind: dir ? 'dir' : 'file',
+          dev: Number(s.dev), ino: Number(s.ino),
+          size: dir ? undefined : Number(s.size), mode: s.mode,
+          mtime: Number(s.mtimeMs), ctime: Number(s.ctimeMs), hash: null,
+          path: node.path
+        }
+      }
+      const statted = []
+      for (let i = 0; i < entries.length; i += concurrency)
+        statted.push(...await Promise.all(entries.slice(i, i + concurrency).map(statOne)))
+
+      // Phase 3: translate parentLazyId -> parent's dev:ino key, now that every
+      // node has been stat()'d, and write.
+      for (const s of statted) {
+        const { parentLazyId } = nodes.get(s.lazyId)
+        const e = { id: key(s.dev, s.ino), parent: parentLazyId == null ? null : lazyToKey.get(parentLazyId), ...s }
+        delete e.lazyId
+        found.set(e.id, e); store.put(e, { flush: false })
+      }
+    }
+    store.flush()
+    return found
+  }
+  return { scan }
+}
+
 const diff = (before, after) => {
   const events = []
   for (const [id, old] of before) {
@@ -309,7 +368,7 @@ const FSWatch = async input => {
   const isStore = p => slash(expand(p)).startsWith(slash(dbDir))
   const pruned = dir => isStore(dir) ||
     (clusterFilters.length > 0 && clusterFilters.every(f => f.excludedDir(dir)))
-  const scanner = Scanner(store, pruned)
+  const scanner = raw.bootstrap === 'typed' ? TypedScanner(store, pruned) : Scanner(store, pruned)
   const clusters = Object.fromEntries(Object.entries(config.clusters).map(([n,c]) => [n,Cluster(n,c)]))
   const watchers = new Map()
   const listeners = new Set()
@@ -417,4 +476,4 @@ const FSWatch = async input => {
   return api
 }
 
-export { FSWatch, parseYaml, normalizeConfig, glob, Filter, MetadataStore, SqliteStore, BACKENDS, describe }
+export { FSWatch, parseYaml, normalizeConfig, glob, Filter, MetadataStore, SqliteStore, BACKENDS, describe, Scanner, TypedScanner }
