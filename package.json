@@ -1,6 +1,6 @@
 {
   "name": "iodb",
-  "version": "1.23.0",
+  "version": "1.24.0",
   "description": "Reactive DB/IO engine: polymorphic factory, universal node resolver, and file/yaml/json/sqlite/dash adapters",
   "main": "src/db.js",
   "type": "module",
